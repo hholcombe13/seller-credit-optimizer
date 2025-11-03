@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type { ScenarioInput, ScenarioOutput } from "@/types/mortgage";
 import { getStandardFhaAnnualMipFactor } from "@/lib/fha";
 
@@ -9,6 +9,29 @@ type Insight = {
   pros: string[];
   cons: string[];
 };
+
+function formatCurrency(value: number | undefined, fractionDigits = 2){
+  if (value == null || Number.isNaN(value)) return "—";
+  return `$${value.toLocaleString(undefined, {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits
+  })}`;
+}
+
+function formatPercent(value: number | undefined, fractionDigits = 3){
+  if (value == null || Number.isNaN(value)) return "—";
+  return `${value.toFixed(fractionDigits)}%`;
+}
+
+function formatNumber(value: number | undefined, options?: { fractionDigits?: number; suffix?: string }){
+  if (value == null || Number.isNaN(value)) return "—";
+  const fractionDigits = options?.fractionDigits ?? 0;
+  const suffix = options?.suffix ?? "";
+  return `${value.toLocaleString(undefined, {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits
+  })}${suffix}`;
+}
 
 const currency = (value: number, options?: { cents?: boolean }) =>
   value.toLocaleString("en-US", {
@@ -42,7 +65,7 @@ function analyzeScenarios(inputs: ScenarioInput[], outputs: ScenarioOutput[]): I
     const cons: string[] = [];
 
     const displayName = scenario.name?.trim() || scenario.program;
-    const finalRate = output.allocationSteps.at(-1)?.rate ?? scenario.noteRate;
+    const finalRate = output.finalRate ?? output.allocationSteps.at(-1)?.rate ?? scenario.noteRate;
 
     if (output.pitiMonthly === minPiti) {
       pros.push("Lowest estimated monthly housing payment in this comparison.");
@@ -197,18 +220,155 @@ export default function Home(){
     });
   }
 
-  const metricRows: Array<[string, (r: ScenarioOutput)=>string | number]> = [
-    ["APR (est)", (r)=> `${r.aprEstimate.toFixed(3)}%`],
-    ["Loan Amount", (r)=> `$${r.loanAmount.toLocaleString()}`],
-    ["P&I", (r)=> `$${r.pAndI.toLocaleString()}`],
-    ["PMI", (r)=> `$${r.pmiMonthly.toLocaleString()}`],
-    ["PITI", (r)=> `$${r.pitiMonthly.toLocaleString()}`],
-    ["Applied Seller Credit", (r)=> `$${r.appliedSellerCredit.toLocaleString()}`],
-    ["→ To Points", (r)=> `$${r.appliedToPoints.toLocaleString()}`],
-    ["→ To Costs", (r)=> `$${r.appliedToCosts.toLocaleString()}`],
-    ["Cash to Close (est)", (r)=> `$${r.cashToClose.toLocaleString()}`],
-    ["Pts Break-Even (mo)", (r)=> r.breakEvenMonthsOnPoints ?? "—"],
-    ["Warnings", (r)=> (r.warnings||[]).join("; ") || "—"],
+  const sections: Array<{
+    title: string;
+    rows: Array<{ label: string; formatter: (scenario: ScenarioInput | undefined, result: ScenarioOutput | undefined) => string }>;
+  }> = [
+    {
+      title: "Scenario Overview",
+      rows: [
+        {
+          label: "Purchase Price",
+          formatter: (s)=> formatCurrency(s?.price, 0)
+        },
+        {
+          label: "Program",
+          formatter: (s)=> s?.program ?? "—"
+        },
+        {
+          label: "LTV",
+          formatter: (s, r)=>{
+            const ratio = typeof s?.ltv === "number"
+              ? s.ltv * 100
+              : (s?.price && r?.loanAmount ? (r.loanAmount / s.price) * 100 : undefined);
+            return typeof ratio === "number" ? formatPercent(ratio, 2) : "—";
+          }
+        },
+        {
+          label: "Loan Amount",
+          formatter: (_s, r)=> formatCurrency(r?.loanAmount, 0)
+        },
+        {
+          label: "Down Payment",
+          formatter: (s, r)=>{
+            if (!s?.price) return "—";
+            const loan = r?.loanAmount ?? s.loanAmount;
+            if (loan == null) return "—";
+            const down = s.price - loan;
+            return formatCurrency(down, 0);
+          }
+        },
+        {
+          label: "Term",
+          formatter: (s)=>{
+            if (!s?.termMonths) return "—";
+            const years = s.termMonths / 12;
+            return `${formatNumber(s.termMonths, { suffix: " mo" })} (${years.toFixed(1)} yr)`;
+          }
+        },
+        {
+          label: "Note Rate",
+          formatter: (s)=> formatPercent(s?.noteRate, 3)
+        },
+        {
+          label: "Effective Rate",
+          formatter: (_s, r)=> formatPercent(r?.finalRate, 3)
+        },
+        {
+          label: "Discount Points",
+          formatter: (s)=> formatPercent(s?.discountPointsPct, 3)
+        },
+        {
+          label: "Points Cost",
+          formatter: (_s, r)=> formatCurrency(r?.pointsCost)
+        },
+        {
+          label: "Closing Costs",
+          formatter: (s)=> formatCurrency(s?.closingCosts)
+        },
+        {
+          label: "Seller Credit",
+          formatter: (s)=> formatCurrency(s?.sellerCredit)
+        },
+        {
+          label: "PMI Type",
+          formatter: (s)=> s?.pmiType ?? "—"
+        },
+        {
+          label: "PMI Annual Factor",
+          formatter: (s)=>{
+            if (s?.pmiAnnualFactor == null) return "—";
+            return formatPercent(s.pmiAnnualFactor * 100, 2);
+          }
+        },
+        {
+          label: "Lock Rate",
+          formatter: (s)=> s?.lockRate ? "Yes" : "No"
+        }
+      ]
+    },
+    {
+      title: "Recurring Costs",
+      rows: [
+        {
+          label: "Principal & Interest",
+          formatter: (_s, r)=> formatCurrency(r?.pAndI)
+        },
+        {
+          label: "PMI",
+          formatter: (_s, r)=> formatCurrency(r?.pmiMonthly)
+        },
+        {
+          label: "Taxes",
+          formatter: (s)=> formatCurrency(s?.taxesMonthly)
+        },
+        {
+          label: "Insurance",
+          formatter: (s)=> formatCurrency(s?.insuranceMonthly)
+        },
+        {
+          label: "HOA",
+          formatter: (s)=> formatCurrency(s?.hoaMonthly)
+        },
+        {
+          label: "Total PITI",
+          formatter: (_s, r)=> formatCurrency(r?.pitiMonthly)
+        }
+      ]
+    },
+    {
+      title: "Credits & Closing",
+      rows: [
+        {
+          label: "Applied Seller Credit",
+          formatter: (_s, r)=> formatCurrency(r?.appliedSellerCredit)
+        },
+        {
+          label: "→ To Points",
+          formatter: (_s, r)=> formatCurrency(r?.appliedToPoints)
+        },
+        {
+          label: "→ To Costs",
+          formatter: (_s, r)=> formatCurrency(r?.appliedToCosts)
+        },
+        {
+          label: "Cash to Close",
+          formatter: (_s, r)=> formatCurrency(r?.cashToClose)
+        },
+        {
+          label: "APR (est)",
+          formatter: (_s, r)=> formatPercent(r?.aprEstimate, 3)
+        },
+        {
+          label: "Pts Break-Even (mo)",
+          formatter: (_s, r)=> r?.breakEvenMonthsOnPoints != null ? formatNumber(r.breakEvenMonthsOnPoints, { suffix: " mo" }) : "—"
+        },
+        {
+          label: "Warnings",
+          formatter: (_s, r)=> r?.warnings?.length ? r.warnings.join("; ") : "—"
+        }
+      ]
+    }
   ];
 
   return (
@@ -285,15 +445,29 @@ export default function Home(){
               <thead>
                 <tr className="bg-gray-50">
                   <th className="p-2 text-left">Metric</th>
-                  {results.map((result, i)=>(<th key={i} className="p-2 text-left">{scenarios[i]?.name||`Option ${i+1}`}</th>))}
+                  {results.map((_,i)=>(<th key={i} className="p-2 text-left">{scenarios[i]?.name||`Option ${i+1}`}</th>))}
                 </tr>
               </thead>
               <tbody>
-                {metricRows.map(([label, format])=>(
-                  <tr key={label}>
-                    <td className="p-2 font-medium">{label}</td>
-                    {results.map((r, i)=>(<td key={i} className="p-2">{format(r)}</td>))}
-                  </tr>
+                {sections.map(section=>(
+                  <Fragment key={section.title}>
+                    <tr className="bg-gray-100">
+                      <td className="p-2 font-semibold" colSpan={1 + results.length}>{section.title}</td>
+                    </tr>
+                    {section.rows.map(row=>(
+                      <tr key={row.label}>
+                        <td className="p-2 font-medium">{row.label}</td>
+                        {results.map((result, i)=>{
+                          const scenario = scenarios[i];
+                          return (
+                            <td key={i} className="p-2">
+                              {row.formatter(scenario, result)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
