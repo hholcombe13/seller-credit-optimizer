@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import type { ScenarioInput, ScenarioOutput } from "@/types/mortgage";
 import { getStandardFhaAnnualMipFactor } from "@/lib/fha";
 
@@ -10,6 +10,32 @@ type Insight = {
   pros: string[];
   cons: string[];
 };
+
+function formatCurrency(value: number | undefined, fractionDigits = 2) {
+  if (value == null || Number.isNaN(value)) return "?";
+  return `$${value.toLocaleString(undefined, {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  })}`;
+}
+
+function formatPercent(value: number | undefined, fractionDigits = 3) {
+  if (value == null || Number.isNaN(value)) return "?";
+  return `${value.toFixed(fractionDigits)}%`;
+}
+
+function formatNumber(
+  value: number | undefined,
+  options?: { fractionDigits?: number; suffix?: string },
+) {
+  if (value == null || Number.isNaN(value)) return "?";
+  const fractionDigits = options?.fractionDigits ?? 0;
+  const suffix = options?.suffix ?? "";
+  return `${value.toLocaleString(undefined, {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  })}${suffix}`;
+}
 
 const currency = (value: number, options?: { cents?: boolean }) =>
   value.toLocaleString("en-US", {
@@ -49,7 +75,8 @@ function analyzeScenarios(
     const cons: string[] = [];
 
     const displayName = scenario.name?.trim() || scenario.program;
-    const finalRate = output.allocationSteps.at(-1)?.rate ?? scenario.noteRate;
+    const finalRate =
+      output.finalRate ?? output.allocationSteps.at(-1)?.rate ?? scenario.noteRate;
 
     if (output.pitiMonthly === minPiti) {
       pros.push("Lowest estimated monthly housing payment in this comparison.");
@@ -184,20 +211,6 @@ const optionBadgeClass =
 const fieldLabelClass =
   "text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-slate-500";
 
-const formatCurrency = (value: number | null | undefined) => {
-  const num = Number.isFinite(value as number) ? Number(value) : 0;
-  const fraction = Math.abs(num % 1) > 0 ? 2 : 0;
-  return num.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: fraction,
-    maximumFractionDigits: 2,
-  });
-};
-
-const formatRate = (value: number | null | undefined, digits = 3) =>
-  `${Number(value ?? 0).toFixed(digits)}%`;
-
 function optionLabel(index: number) {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   let i = index;
@@ -225,41 +238,16 @@ export default function Home() {
       (sum, scenario) => sum + (scenario.sellerCredit ?? 0),
       0,
     );
-    const avgRate =
-      scenarios.reduce((sum, scenario) => sum + (scenario.noteRate ?? 0), 0) /
-      scenarios.length;
+    const avgRate = scenarios.length
+      ? scenarios.reduce((sum, scenario) => sum + (scenario.noteRate ?? 0), 0) /
+        scenarios.length
+      : 0;
 
     return {
       totalCredit,
       avgRate,
     };
   }, [scenarios]);
-
-  const comparisonRows: Array<[string, (result: ScenarioOutput) => string]> = useMemo(
-    () => [
-      ["APR (est)", (r) => formatRate(r.aprEstimate)],
-      ["Loan Amount", (r) => formatCurrency(r.loanAmount)],
-      ["Principal & Interest", (r) => formatCurrency(r.pAndI)],
-      ["Mortgage Insurance", (r) => formatCurrency(r.pmiMonthly)],
-      ["Total Payment (PITI)", (r) => formatCurrency(r.pitiMonthly)],
-      ["Applied Seller Credit", (r) => formatCurrency(r.appliedSellerCredit)],
-      ["? To Discount Points", (r) => formatCurrency(r.appliedToPoints)],
-      ["? To Closing Costs", (r) => formatCurrency(r.appliedToCosts)],
-      ["Cash to Close (est)", (r) => formatCurrency(r.cashToClose)],
-      [
-        "Points Break-even",
-        (r) =>
-          typeof r.breakEvenMonthsOnPoints === "number"
-            ? `${r.breakEvenMonthsOnPoints} mo`
-            : "?",
-      ],
-      [
-        "Warnings",
-        (r) => (r.warnings?.length ? r.warnings.join(" ? ") : "?"),
-      ],
-    ],
-    [],
-  );
 
   const highlightCards = useMemo(() => {
     if (!results.length) {
@@ -312,7 +300,7 @@ export default function Home() {
       },
       {
         title: "Best APR Estimate",
-        value: formatRate(results[lowestAprIdx].aprEstimate),
+        value: formatPercent(results[lowestAprIdx].aprEstimate, 3),
         descriptor: "Annual percentage rate",
         option: nameFor(lowestAprIdx),
       },
@@ -321,7 +309,7 @@ export default function Home() {
     if (breakEven) {
       summary.push({
         title: "Fastest Points Break-even",
-        value: `${breakEven.value} mo`,
+        value: formatNumber(breakEven.value, { suffix: " mo" }),
         descriptor: "Time to recover buydown",
         option: nameFor(breakEven.index),
       });
@@ -329,6 +317,194 @@ export default function Home() {
 
     return summary;
   }, [results, scenarios]);
+
+  const sections = useMemo(
+    () =>
+      [
+        {
+          title: "Scenario Overview",
+          rows: [
+            {
+              label: "Purchase Price",
+              formatter: (scenario: ScenarioInput | undefined) =>
+                formatCurrency(scenario?.price, 0),
+            },
+            {
+              label: "Program",
+              formatter: (scenario: ScenarioInput | undefined) =>
+                scenario?.program ?? "?",
+            },
+            {
+              label: "LTV",
+              formatter: (
+                scenario: ScenarioInput | undefined,
+                result: ScenarioOutput | undefined,
+              ) => {
+                const ratio =
+                  typeof scenario?.ltv === "number"
+                    ? scenario.ltv * 100
+                    : scenario?.price && result?.loanAmount
+                      ? (result.loanAmount / scenario.price) * 100
+                      : undefined;
+                return typeof ratio === "number"
+                  ? formatPercent(ratio, 2)
+                  : "?";
+              },
+            },
+            {
+              label: "Loan Amount",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                formatCurrency(result?.loanAmount, 0),
+            },
+            {
+              label: "Down Payment",
+              formatter: (
+                scenario: ScenarioInput | undefined,
+                result: ScenarioOutput | undefined,
+              ) => {
+                if (!scenario?.price) return "?";
+                const loan = result?.loanAmount ?? scenario.loanAmount;
+                if (loan == null) return "?";
+                return formatCurrency(scenario.price - loan, 0);
+              },
+            },
+            {
+              label: "Term",
+              formatter: (scenario: ScenarioInput | undefined) => {
+                if (!scenario?.termMonths) return "?";
+                const years = scenario.termMonths / 12;
+                return `${formatNumber(scenario.termMonths, { suffix: " mo" })} (${years.toFixed(1)} yr)`;
+              },
+            },
+            {
+              label: "Note Rate",
+              formatter: (scenario: ScenarioInput | undefined) =>
+                formatPercent(scenario?.noteRate, 3),
+            },
+            {
+              label: "Effective Rate",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                formatPercent(result?.finalRate, 3),
+            },
+            {
+              label: "Discount Points",
+              formatter: (scenario: ScenarioInput | undefined) =>
+                formatPercent(scenario?.discountPointsPct, 3),
+            },
+            {
+              label: "Points Cost",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                formatCurrency(result?.pointsCost),
+            },
+            {
+              label: "Closing Costs",
+              formatter: (scenario: ScenarioInput | undefined) =>
+                formatCurrency(scenario?.closingCosts),
+            },
+            {
+              label: "Seller Credit",
+              formatter: (scenario: ScenarioInput | undefined) =>
+                formatCurrency(scenario?.sellerCredit),
+            },
+            {
+              label: "PMI Type",
+              formatter: (scenario: ScenarioInput | undefined) =>
+                scenario?.pmiType ?? "?",
+            },
+            {
+              label: "PMI Annual Factor",
+              formatter: (scenario: ScenarioInput | undefined) =>
+                scenario?.pmiAnnualFactor == null
+                  ? "?"
+                  : formatPercent(scenario.pmiAnnualFactor * 100, 2),
+            },
+            {
+              label: "Lock Rate",
+              formatter: (scenario: ScenarioInput | undefined) =>
+                scenario?.lockRate ? "Yes" : "No",
+            },
+          ],
+        },
+        {
+          title: "Recurring Costs",
+          rows: [
+            {
+              label: "Principal & Interest",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                formatCurrency(result?.pAndI),
+            },
+            {
+              label: "PMI",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                formatCurrency(result?.pmiMonthly),
+            },
+            {
+              label: "Taxes",
+              formatter: (scenario: ScenarioInput | undefined) =>
+                formatCurrency(scenario?.taxesMonthly),
+            },
+            {
+              label: "Insurance",
+              formatter: (scenario: ScenarioInput | undefined) =>
+                formatCurrency(scenario?.insuranceMonthly),
+            },
+            {
+              label: "HOA",
+              formatter: (scenario: ScenarioInput | undefined) =>
+                formatCurrency(scenario?.hoaMonthly),
+            },
+            {
+              label: "Total PITI",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                formatCurrency(result?.pitiMonthly),
+            },
+          ],
+        },
+        {
+          title: "Credits & Closing",
+          rows: [
+            {
+              label: "Applied Seller Credit",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                formatCurrency(result?.appliedSellerCredit),
+            },
+            {
+              label: "? To Points",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                formatCurrency(result?.appliedToPoints),
+            },
+            {
+              label: "? To Costs",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                formatCurrency(result?.appliedToCosts),
+            },
+            {
+              label: "Cash to Close",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                formatCurrency(result?.cashToClose),
+            },
+            {
+              label: "APR (est)",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                formatPercent(result?.aprEstimate, 3),
+            },
+            {
+              label: "Pts Break-Even (mo)",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                result?.breakEvenMonthsOnPoints != null
+                  ? formatNumber(result.breakEvenMonthsOnPoints, { suffix: " mo" })
+                  : "?",
+            },
+            {
+              label: "Warnings",
+              formatter: (_scenario, result: ScenarioOutput | undefined) =>
+                result?.warnings?.length ? result.warnings.join("; ") : "?",
+            },
+          ],
+        },
+      ],
+    [],
+  );
 
   async function compare() {
     try {
@@ -452,7 +628,7 @@ export default function Home() {
                 Average Note Rate
               </dt>
               <dd className="mt-1 text-2xl font-semibold text-slate-900">
-                {formatRate(aggregate.avgRate, 3)}
+                {formatPercent(aggregate.avgRate, 3)}
               </dd>
             </div>
             <div className="rounded-2xl border border-slate-200/80 bg-white/70 px-4 py-3">
@@ -460,7 +636,7 @@ export default function Home() {
                 Builder Credits Modeled
               </dt>
               <dd className="mt-1 text-2xl font-semibold text-slate-900">
-                {formatCurrency(aggregate.totalCredit)}
+                {formatCurrency(aggregate.totalCredit, 0)}
               </dd>
             </div>
           </dl>
@@ -756,20 +932,32 @@ export default function Home() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100/80">
-                    {comparisonRows.map(([label, formatter]) => (
-                      <tr key={label} className="even:bg-slate-50/60">
-                        <td className="px-4 py-3 text-sm font-semibold text-slate-600">
-                          {label}
-                        </td>
-                        {results.map((result, index) => (
+                    {sections.map((section) => (
+                      <Fragment key={section.title}>
+                        <tr className="bg-slate-100/75">
                           <td
-                            key={`${label}-${index}`}
-                            className="px-4 py-3 text-sm text-slate-900"
+                            colSpan={1 + results.length}
+                            className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600"
                           >
-                            {formatter(result)}
+                            {section.title}
                           </td>
+                        </tr>
+                        {section.rows.map((row) => (
+                          <tr key={row.label} className="even:bg-slate-50/60">
+                            <td className="px-4 py-3 text-sm font-semibold text-slate-600">
+                              {row.label}
+                            </td>
+                            {results.map((result, index) => (
+                              <td
+                                key={`${row.label}-${index}`}
+                                className="px-4 py-3 text-sm text-slate-900"
+                              >
+                                {row.formatter(scenarios[index], result)}
+                              </td>
+                            ))}
+                          </tr>
                         ))}
-                      </tr>
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

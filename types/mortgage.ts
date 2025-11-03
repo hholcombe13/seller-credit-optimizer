@@ -25,6 +25,7 @@ export interface ScenarioOutput {
   appliedSellerCredit: number;
   appliedToPoints: number;
   appliedToCosts: number;
+  finalRate: number;
   pAndI: number;
   pmiMonthly: number;
   pitiMonthly: number;
