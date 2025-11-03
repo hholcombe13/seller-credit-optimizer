@@ -87,6 +87,7 @@ export function computeScenario(s: ScenarioInput): ScenarioOutput {
     appliedSellerCredit,
     appliedToPoints,
     appliedToCosts,
+    finalRate: Number(newRate.toFixed(3)),
     pAndI: Number(pni.toFixed(2)),
     pmiMonthly: Number(pmi.toFixed(2)),
     pitiMonthly: Number(piti.toFixed(2)),
