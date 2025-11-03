@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
-import type { ScenarioInput } from "@/types/mortgage";
+import { useCallback, useEffect, useState } from "react";
+import type { LoanTemplate, ScenarioInput } from "@/types/mortgage";
 
 const blank: ScenarioInput = {
   name: "Option",
@@ -23,6 +23,12 @@ const blank: ScenarioInput = {
 export default function Home(){
   const [scenarios, setScenarios] = useState<ScenarioInput[]>([{...blank, name:"Option A"}, {...blank, name:"Option B"}]);
   const [results, setResults] = useState<any[]>([]);
+  const [templates, setTemplates] = useState<LoanTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templateError, setTemplateError] = useState<string|null>(null);
+  const [templateMessage, setTemplateMessage] = useState<string|null>(null);
+  const [savingTemplateIndex, setSavingTemplateIndex] = useState<number|null>(null);
+  const [deletingTemplateId, setDeletingTemplateId] = useState<string|null>(null);
 
   async function compare(){
     const res = await fetch("/api/compare", {
@@ -39,6 +45,95 @@ export default function Home(){
     });
   }
 
+  const loadTemplates = useCallback(async ()=>{
+    setTemplatesLoading(true);
+    setTemplateError(null);
+    try {
+      const res = await fetch("/api/templates");
+      const payload = await res.json().catch(()=>null);
+      if (!res.ok) {
+        throw new Error(getErrorMessage(payload, "Unable to load templates"));
+      }
+      setTemplates(Array.isArray(payload) ? payload : []);
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : "Unable to load templates");
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, []);
+
+  useEffect(()=>{
+    void loadTemplates();
+  }, [loadTemplates]);
+
+  async function saveTemplate(index: number){
+    const scenario = scenarios[index];
+    if (!scenario) return;
+
+    const defaultTitle = scenario.name?.trim() || `${scenario.program} ${scenario.noteRate.toFixed(3)}%`;
+    const input = window.prompt("Template title", defaultTitle);
+    if (input === null) return;
+    const title = input.trim();
+    if (!title) {
+      setTemplateError("Template title is required.");
+      return;
+    }
+
+    setSavingTemplateIndex(index);
+    setTemplateError(null);
+    setTemplateMessage(null);
+
+    try {
+      const res = await fetch("/api/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, scenario }),
+      });
+      const payload = await res.json().catch(()=>null);
+      if (!res.ok || !payload) {
+        throw new Error(getErrorMessage(payload, "Failed to save template"));
+      }
+      const saved = payload as LoanTemplate;
+      setTemplates(prev=>[saved, ...prev.filter(t=>t.id !== saved.id)]);
+      setTemplateMessage(`Saved "${saved.title}" template.`);
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : "Failed to save template");
+    } finally {
+      setSavingTemplateIndex(null);
+    }
+  }
+
+  async function deleteTemplate(id: string){
+    const template = templates.find(t=>t.id === id);
+    if (!template) return;
+    if (!window.confirm(`Delete template "${template.title}"?`)) return;
+
+    setDeletingTemplateId(id);
+    setTemplateError(null);
+    setTemplateMessage(null);
+
+    try {
+      const res = await fetch(`/api/templates/${id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 204) {
+        const payload = await res.json().catch(()=>null);
+        throw new Error(getErrorMessage(payload, "Failed to delete template"));
+      }
+      setTemplates(prev=>prev.filter(t=>t.id !== id));
+      setTemplateMessage(`Deleted "${template.title}" template.`);
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : "Failed to delete template");
+    } finally {
+      setDeletingTemplateId(null);
+    }
+  }
+
+  function importTemplate(template: LoanTemplate){
+    setTemplateError(null);
+    setTemplateMessage(null);
+    setScenarios(prev=>[...prev, templateToScenario(template, prev)]);
+    setTemplateMessage(`Imported "${template.title}" into scenarios.`);
+  }
+
   return (
     <main className="p-6 space-y-6">
       <header className="flex items-center justify-between">
@@ -48,6 +143,43 @@ export default function Home(){
           <button className="px-3 py-2 bg-black text-white rounded" onClick={compare}>Compare</button>
         </div>
       </header>
+
+      <section className="rounded border p-4 space-y-3 bg-white">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Saved Templates</h2>
+          <button className="px-3 py-1 text-sm border rounded" onClick={()=>void loadTemplates()} disabled={templatesLoading}>
+            {templatesLoading ? "Loading..." : "Refresh"}
+          </button>
+        </div>
+        {templateError && <p className="text-sm text-red-600">{templateError}</p>}
+        {templateMessage && <p className="text-sm text-green-600">{templateMessage}</p>}
+        {templatesLoading && !templates.length ? (
+          <p className="text-sm text-gray-500">Loading templates...</p>
+        ) : templates.length ? (
+          <ul className="space-y-2">
+            {templates.map(t=>(
+              <li key={t.id} className="flex items-center justify-between rounded border p-3">
+                <div>
+                  <p className="font-medium">{t.title}</p>
+                  <p className="text-xs text-gray-500">{t.program} - {t.noteRate.toFixed(3)}% rate</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button className="px-2 py-1 text-sm border rounded" onClick={()=>importTemplate(t)}>Import</button>
+                  <button
+                    className="px-2 py-1 text-sm border rounded text-red-600"
+                    onClick={()=>deleteTemplate(t.id)}
+                    disabled={deletingTemplateId === t.id}
+                  >
+                    {deletingTemplateId === t.id ? "Deleting..." : "Delete"}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-gray-500">No templates saved yet.</p>
+        )}
+      </section>
 
       <section className="grid md:grid-cols-2 gap-4">
         {scenarios.map((s,i)=>(
@@ -101,7 +233,17 @@ export default function Home(){
                 <input type="checkbox" checked={!!s.lockRate} onChange={e=>update(i,{lockRate:e.target.checked})}/> Lock Rate (no buydown)
               </label>
             </div>
-            <p className="text-xs text-gray-500">Scenario tool — estimates only. No borrower PII.</p>
+            <p className="text-xs text-gray-500">Scenario tool ? estimates only. No borrower PII.</p>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="px-3 py-1 text-sm border rounded"
+                onClick={()=>saveTemplate(i)}
+                disabled={savingTemplateIndex === i}
+              >
+                {savingTemplateIndex === i ? "Saving..." : "Save as Template"}
+              </button>
+            </div>
           </div>
         ))}
       </section>
@@ -123,11 +265,11 @@ export default function Home(){
                 ["PMI", (r:any)=> `$${r.pmiMonthly.toLocaleString()}`],
                 ["PITI", (r:any)=> `$${r.pitiMonthly.toLocaleString()}`],
                 ["Applied Seller Credit", (r:any)=> `$${r.appliedSellerCredit.toLocaleString()}`],
-                ["→ To Points", (r:any)=> `$${r.appliedToPoints.toLocaleString()}`],
-                ["→ To Costs", (r:any)=> `$${r.appliedToCosts.toLocaleString()}`],
+                ["? To Points", (r:any)=> `$${r.appliedToPoints.toLocaleString()}`],
+                ["? To Costs", (r:any)=> `$${r.appliedToCosts.toLocaleString()}`],
                 ["Cash to Close (est)", (r:any)=> `$${r.cashToClose.toLocaleString()}`],
-                ["Pts Break-Even (mo)", (r:any)=> r.breakEvenMonthsOnPoints ?? "—"],
-                ["Warnings", (r:any)=> (r.warnings||[]).join("; ") || "—"],
+                ["Pts Break-Even (mo)", (r:any)=> r.breakEvenMonthsOnPoints ?? "?"],
+                ["Warnings", (r:any)=> (r.warnings||[]).join("; ") || "?"],
               ].map(([label, fmt])=>(
                 <tr key={label as string}>
                   <td className="p-2 font-medium">{label}</td>
@@ -140,4 +282,57 @@ export default function Home(){
       )}
     </main>
   );
+}
+
+function templateToScenario(template: LoanTemplate, existing: ScenarioInput[]): ScenarioInput {
+  const name = deriveUniqueName(template.title, existing);
+
+  return {
+    name,
+    price: template.price,
+    ltv: template.ltv ?? undefined,
+    loanAmount: template.loanAmount ?? undefined,
+    program: template.program,
+    termMonths: template.termMonths,
+    noteRate: template.noteRate,
+    discountPointsPct: template.discountPointsPct,
+    closingCosts: template.closingCosts,
+    sellerCredit: template.sellerCredit,
+    pmiType: template.pmiType ?? undefined,
+    pmiAnnualFactor: template.pmiAnnualFactor ?? undefined,
+    taxesMonthly: template.taxesMonthly ?? undefined,
+    insuranceMonthly: template.insuranceMonthly ?? undefined,
+    hoaMonthly: template.hoaMonthly ?? undefined,
+    lockRate: template.lockRate ?? false,
+  };
+}
+
+function deriveUniqueName(base: string, existing: ScenarioInput[]): string {
+  const fallback = "Imported Option";
+  const trimmed = base.trim() || fallback;
+  const existingNames = new Set(
+    existing
+      .map(s => (s.name ?? "").trim())
+      .filter(Boolean),
+  );
+  if (!existingNames.has(trimmed)) return trimmed;
+  let counter = 2;
+  let candidate = `${trimmed} (${counter})`;
+  while (existingNames.has(candidate)) {
+    counter += 1;
+    candidate = `${trimmed} (${counter})`;
+  }
+  return candidate;
+}
+
+function getErrorMessage(payload: any, fallback: string): string {
+  if (!payload) return fallback;
+  if (typeof payload === "string") return payload;
+  if (typeof payload.error === "string") return payload.error;
+  if (typeof payload.message === "string") return payload.message;
+  if (payload.error && typeof payload.error === "object") {
+    const errors = Array.isArray(payload.error._errors) ? payload.error._errors : [];
+    if (errors.length) return errors.join(", ");
+  }
+  return fallback;
 }
