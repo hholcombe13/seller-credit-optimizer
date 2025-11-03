@@ -20,7 +20,42 @@
 }
 
 body {
-  background: var(--background);
+  background:
+    radial-gradient(110% 110% at 50% -10%, rgba(30, 64, 175, 0.12), transparent),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.04) 0%, transparent 55%),
+    var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), "Inter", "Segoe UI", system-ui, -apple-system,
+    BlinkMacSystemFont, sans-serif;
+  min-height: 100vh;
+  margin: 0;
+}
+
+@layer base {
+  input:not([type="checkbox"]),
+  select,
+  textarea {
+    border-radius: 0.75rem;
+    border: 1px solid rgba(148, 163, 184, 0.5);
+    padding: 0.65rem 0.85rem;
+    background: rgba(255, 255, 255, 0.9);
+    color: #0f172a;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  input:not([type="checkbox"]):focus,
+  select:focus,
+  textarea:focus {
+    outline: none;
+    border-color: rgba(37, 99, 235, 0.8);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+  }
+
+  input[type="checkbox"] {
+    accent-color: rgba(37, 99, 235, 0.85);
+  }
+
+  button {
+    font-family: inherit;
+  }
 }
