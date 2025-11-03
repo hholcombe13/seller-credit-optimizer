@@ -1,11 +1,24 @@
 import type { ScenarioInput, ScenarioOutput, Program } from "@/types/mortgage";
+import { getStandardFhaAnnualMipFactor } from "@/lib/fha";
 
 const DEFAULT_CAPS: Record<Program, (ltv: number)=>number> = {
   Conventional: (ltv)=> ltv > 0.90 ? 0.03 : (ltv > 0.75 ? 0.06 : 0.09),
-  FHA: (_)=> 0.06,
-  VA: (_)=> 0.04,
-  USDA: (_)=> 0.06,
-  Jumbo: (_)=> 0.03,
+  FHA: (ltv)=> {
+    void ltv;
+    return 0.06;
+  },
+  VA: (ltv)=> {
+    void ltv;
+    return 0.04;
+  },
+  USDA: (ltv)=> {
+    void ltv;
+    return 0.06;
+  },
+  Jumbo: (ltv)=> {
+    void ltv;
+    return 0.03;
+  },
 };
 
 function amortPayment(loan: number, ratePct: number, termMonths: number){
@@ -59,7 +72,9 @@ export function computeScenario(s: ScenarioInput): ScenarioOutput {
   }
 
   const pni = amortPayment(loanAmount, newRate, s.termMonths);
-  const pmi = pmiMonthly(s.pmiType, s.pmiAnnualFactor, loanAmount);
+  const fhaDefaultMip = s.program === "FHA" ? getStandardFhaAnnualMipFactor(s) : undefined;
+  const pmiAnnualFactor = s.pmiAnnualFactor ?? fhaDefaultMip;
+  const pmi = pmiMonthly(s.pmiType, pmiAnnualFactor, loanAmount);
 
   const appliedSellerCredit = appliedToPoints + Math.min(
     s.closingCosts,
