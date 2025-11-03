@@ -74,7 +74,6 @@ export async function POST(req: NextRequest) {
     const json = await req.json();
     const { title, scenario } = createTemplateSchema.parse(json);
 
-    // Ensure loanAmount is present and finite if LTV absent
     const data = await prisma.template.create({
       data: {
         title,
@@ -105,4 +104,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Failed to create template" }, { status: 500 });
   }
 }
-
