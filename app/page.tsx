@@ -170,6 +170,20 @@ export default function Home(){
     });
   }
 
+  const metricRows: Array<[string, (r: ScenarioOutput)=>string | number]> = [
+    ["APR (est)", (r)=> `${r.aprEstimate.toFixed(3)}%`],
+    ["Loan Amount", (r)=> `$${r.loanAmount.toLocaleString()}`],
+    ["P&I", (r)=> `$${r.pAndI.toLocaleString()}`],
+    ["PMI", (r)=> `$${r.pmiMonthly.toLocaleString()}`],
+    ["PITI", (r)=> `$${r.pitiMonthly.toLocaleString()}`],
+    ["Applied Seller Credit", (r)=> `$${r.appliedSellerCredit.toLocaleString()}`],
+    ["→ To Points", (r)=> `$${r.appliedToPoints.toLocaleString()}`],
+    ["→ To Costs", (r)=> `$${r.appliedToCosts.toLocaleString()}`],
+    ["Cash to Close (est)", (r)=> `$${r.cashToClose.toLocaleString()}`],
+    ["Pts Break-Even (mo)", (r)=> r.breakEvenMonthsOnPoints ?? "—"],
+    ["Warnings", (r)=> (r.warnings||[]).join("; ") || "—"],
+  ];
+
   return (
     <main className="p-6 space-y-6">
       <header className="flex items-center justify-between">
@@ -192,7 +206,7 @@ export default function Home(){
                 <input type="number" step="0.01" className="w-full border rounded p-2" value={s.ltv ?? 0} onChange={e=>update(i,{ltv:+e.target.value})}/>
               </label>
               <label className="text-sm">Program
-                <select className="w-full border rounded p-2" value={s.program} onChange={e=>update(i,{program:e.target.value as any})}>
+                <select className="w-full border rounded p-2" value={s.program} onChange={e=>update(i,{program:e.target.value as ScenarioInput["program"]})}>
                   <option>Conventional</option><option>FHA</option><option>VA</option><option>USDA</option><option>Jumbo</option>
                 </select>
               </label>
@@ -212,7 +226,7 @@ export default function Home(){
                 <input type="number" className="w-full border rounded p-2" value={s.sellerCredit} onChange={e=>update(i,{sellerCredit:+e.target.value})}/>
               </label>
               <label className="text-sm">PMI Type
-                <select className="w-full border rounded p-2" value={s.pmiType} onChange={e=>update(i,{pmiType:e.target.value as any})}>
+                <select className="w-full border rounded p-2" value={s.pmiType} onChange={e=>update(i,{pmiType:e.target.value as ScenarioInput["pmiType"]})}>
                   <option>BPMI</option><option>SPMI</option><option>LPMI</option><option>None</option>
                 </select>
               </label>
@@ -248,22 +262,10 @@ export default function Home(){
                 </tr>
               </thead>
               <tbody>
-                {[
-                  ["APR (est)", (r: ScenarioOutput)=> `${r.aprEstimate.toFixed(3)}%`],
-                  ["Loan Amount", (r: ScenarioOutput)=> `$${r.loanAmount.toLocaleString()}`],
-                  ["P&I", (r: ScenarioOutput)=> `$${r.pAndI.toLocaleString()}`],
-                  ["PMI", (r: ScenarioOutput)=> `$${r.pmiMonthly.toLocaleString()}`],
-                  ["PITI", (r: ScenarioOutput)=> `$${r.pitiMonthly.toLocaleString()}`],
-                  ["Applied Seller Credit", (r: ScenarioOutput)=> `$${r.appliedSellerCredit.toLocaleString()}`],
-                  ["→ To Points", (r: ScenarioOutput)=> `$${r.appliedToPoints.toLocaleString()}`],
-                  ["→ To Costs", (r: ScenarioOutput)=> `$${r.appliedToCosts.toLocaleString()}`],
-                  ["Cash to Close (est)", (r: ScenarioOutput)=> `$${r.cashToClose.toLocaleString()}`],
-                  ["Pts Break-Even (mo)", (r: ScenarioOutput)=> r.breakEvenMonthsOnPoints ?? "—"],
-                  ["Warnings", (r: ScenarioOutput)=> (r.warnings||[]).join("; ") || "—"],
-                ].map(([label, fmt])=>(
-                  <tr key={label as string}>
+                {metricRows.map(([label, format])=>(
+                  <tr key={label}>
                     <td className="p-2 font-medium">{label}</td>
-                    {results.map((r, i)=>(<td key={i} className="p-2">{(fmt as (val: ScenarioOutput)=>string|number)(r)}</td>))}
+                    {results.map((r, i)=>(<td key={i} className="p-2">{format(r)}</td>))}
                   </tr>
                 ))}
               </tbody>
