@@ -1,0 +1,30 @@
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Template {
+  id               String   @id @default(cuid())
+  title            String
+  program          String
+  termMonths       Int
+  price            Float
+  ltv              Float?
+  loanAmount       Float?
+  noteRate         Float
+  discountPts      Float
+  closingCosts     Float
+  sellerCredit     Float
+  pmiType          String?
+  pmiAnnualFac     Float?
+  taxesMonthly     Float?
+  insuranceMonthly Float?
+  hoaMonthly       Float?
+  lockRate         Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
