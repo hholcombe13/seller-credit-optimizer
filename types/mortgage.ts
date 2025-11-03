@@ -36,24 +36,29 @@ export interface ScenarioOutput {
   allocationSteps: Array<{ rate: number; pointsCost: number; monthlySave: number; breakEven: number }>;
 }
 
-export interface ScenarioTemplate {
+export interface LoanTemplate {
   id: string;
   title: string;
   program: Program;
   termMonths: number;
   price: number;
-  ltv?: number;
-  loanAmount?: number;
+  ltv?: number | null;
+  loanAmount?: number | null;
   noteRate: number;
   discountPointsPct: number;
   closingCosts: number;
   sellerCredit: number;
   pmiType?: ScenarioInput["pmiType"];
-  pmiAnnualFactor?: number;
-  taxesMonthly?: number;
-  insuranceMonthly?: number;
-  hoaMonthly?: number;
-  lockRate: boolean;
+  pmiAnnualFactor?: number | null;
+  taxesMonthly?: number | null;
+  insuranceMonthly?: number | null;
+  hoaMonthly?: number | null;
+  lockRate?: boolean | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LoanTemplatePayload {
+  title: string;
+  scenario: ScenarioInput;
 }

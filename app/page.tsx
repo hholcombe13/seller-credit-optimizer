@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import type { ScenarioInput, ScenarioOutput, ScenarioTemplate } from "@/types/mortgage";
+import type { LoanTemplate, ScenarioInput, ScenarioOutput } from "@/types/mortgage";
 import { getStandardFhaAnnualMipFactor } from "@/lib/fha";
 
 type Insight = {
@@ -169,13 +169,13 @@ function analyzeScenarios(
 
     if (!pros.length) {
       pros.push(
-        "Balanced trade-offs?focus on which lever (payment vs. cash) matters more to you.",
+        "Balanced trade-offs - focus on which lever (payment vs. cash) matters more to you.",
       );
     }
 
     if (!cons.length) {
       cons.push(
-        "No major drawbacks flagged?verify program fit with underwriting guidelines.",
+        "No major drawbacks flagged - verify program fit with underwriting guidelines.",
       );
     }
 
@@ -232,111 +232,13 @@ export default function Home() {
   const [results, setResults] = useState<ScenarioOutput[]>([]);
   const [chatInsights, setChatInsights] = useState<Insight[]>([]);
   const [isComparing, setIsComparing] = useState(false);
-  const [templates, setTemplates] = useState<ScenarioTemplate[]>([]);
-  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+
+  const [templates, setTemplates] = useState<LoanTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
   const [templateError, setTemplateError] = useState<string | null>(null);
-
-  const loadTemplates = useCallback(async () => {
-    try {
-      setIsLoadingTemplates(true);
-      setTemplateError(null);
-      const response = await fetch("/api/templates");
-      if (!response.ok) {
-        throw new Error("Request failed");
-      }
-      const data: ScenarioTemplate[] = await response.json();
-      setTemplates(data);
-    } catch (error) {
-      console.error("Failed to load templates", error);
-      setTemplateError("Unable to load saved templates right now.");
-    } finally {
-      setIsLoadingTemplates(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadTemplates();
-  }, [loadTemplates]);
-
-  const saveTemplate = useCallback(
-    async (index: number) => {
-      const scenario = scenarios[index];
-      if (!scenario) return;
-
-      const defaultTitle = scenario.name?.trim() || optionLabel(index);
-      const input = window.prompt("Template name", defaultTitle);
-      if (!input) return;
-      const title = input.trim();
-      if (!title) {
-        window.alert("Template name cannot be blank.");
-        return;
-      }
-
-      try {
-        setTemplateError(null);
-        const response = await fetch("/api/templates", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, scenario }),
-        });
-
-        if (!response.ok) {
-          const message = await response.text();
-          throw new Error(message || "Request failed");
-        }
-
-        const saved: ScenarioTemplate = await response.json();
-        setTemplates((previous) => {
-          const existingIndex = previous.findIndex((item) => item.id === saved.id);
-          if (existingIndex >= 0) {
-            const next = [...previous];
-            next[existingIndex] = saved;
-            return next;
-          }
-          return [saved, ...previous];
-        });
-      } catch (error) {
-        console.error("Unable to save template", error);
-        window.alert("Unable to save template. Please try again.");
-      }
-    },
-    [scenarios],
-  );
-
-  const applyTemplate = useCallback(
-    (index: number, templateId: string) => {
-      const template = templates.find((item) => item.id === templateId);
-      if (!template) return;
-
-      setScenarios((previous) => {
-        const next = [...previous];
-        const current = next[index] ?? { ...blank, name: optionLabel(index) };
-
-        next[index] = {
-          ...current,
-          name: template.title,
-          price: template.price,
-          ltv: template.ltv ?? undefined,
-          loanAmount: template.loanAmount ?? undefined,
-          program: template.program,
-          termMonths: template.termMonths,
-          noteRate: template.noteRate,
-          discountPointsPct: template.discountPointsPct,
-          closingCosts: template.closingCosts,
-          sellerCredit: template.sellerCredit,
-          pmiType: template.pmiType ?? current.pmiType ?? "BPMI",
-          pmiAnnualFactor: template.pmiAnnualFactor ?? undefined,
-          taxesMonthly: template.taxesMonthly ?? undefined,
-          insuranceMonthly: template.insuranceMonthly ?? undefined,
-          hoaMonthly: template.hoaMonthly ?? undefined,
-          lockRate: template.lockRate,
-        };
-
-        return next;
-      });
-    },
-    [templates],
-  );
+  const [templateMessage, setTemplateMessage] = useState<string | null>(null);
+  const [savingTemplateIndex, setSavingTemplateIndex] = useState<number | null>(null);
+  const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
 
   const aggregate = useMemo(() => {
     const totalCredit = scenarios.reduce(
@@ -574,12 +476,12 @@ export default function Home() {
                 formatCurrency(result?.appliedSellerCredit),
             },
             {
-              label: "? To Points",
+              label: "To Points",
               formatter: (_scenario, result: ScenarioOutput | undefined) =>
                 formatCurrency(result?.appliedToPoints),
             },
             {
-              label: "? To Costs",
+              label: "To Costs",
               formatter: (_scenario, result: ScenarioOutput | undefined) =>
                 formatCurrency(result?.appliedToCosts),
             },
@@ -610,6 +512,27 @@ export default function Home() {
       ],
     [],
   );
+
+  const loadTemplates = useCallback(async () => {
+    setTemplatesLoading(true);
+    setTemplateError(null);
+    try {
+      const res = await fetch("/api/templates");
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(getErrorMessage(payload, "Unable to load templates"));
+      }
+      setTemplates(Array.isArray(payload) ? payload : []);
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : "Unable to load templates");
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTemplates();
+  }, [loadTemplates]);
 
   async function compare() {
     try {
@@ -674,6 +597,74 @@ export default function Home() {
     ]);
   }
 
+  async function saveTemplate(index: number) {
+    const scenario = scenarios[index];
+    if (!scenario) return;
+
+    const defaultTitle = scenario.name?.trim() || `${scenario.program} ${scenario.noteRate.toFixed(3)}%`;
+    const input = window.prompt("Template title", defaultTitle);
+    if (input === null) return;
+    const title = input.trim();
+    if (!title) {
+      setTemplateError("Template title is required.");
+      return;
+    }
+
+    setSavingTemplateIndex(index);
+    setTemplateError(null);
+    setTemplateMessage(null);
+
+    try {
+      const res = await fetch("/api/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, scenario }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok || !payload) {
+        throw new Error(getErrorMessage(payload, "Failed to save template"));
+      }
+      const saved = payload as LoanTemplate;
+      setTemplates((prev) => [saved, ...prev.filter((t) => t.id !== saved.id)]);
+      setTemplateMessage(`Saved "${saved.title}" template.`);
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : "Failed to save template");
+    } finally {
+      setSavingTemplateIndex(null);
+    }
+  }
+
+  async function deleteTemplate(id: string) {
+    const template = templates.find((t) => t.id === id);
+    if (!template) return;
+    if (!window.confirm(`Delete template "${template.title}"?`)) return;
+
+    setDeletingTemplateId(id);
+    setTemplateError(null);
+    setTemplateMessage(null);
+
+    try {
+      const res = await fetch(`/api/templates/${id}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 204) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(getErrorMessage(payload, "Failed to delete template"));
+      }
+      setTemplates((prev) => prev.filter((t) => t.id !== id));
+      setTemplateMessage(`Deleted "${template.title}" template.`);
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : "Failed to delete template");
+    } finally {
+      setDeletingTemplateId(null);
+    }
+  }
+
+  function importTemplate(template: LoanTemplate) {
+    setTemplateError(null);
+    setTemplateMessage(null);
+    setScenarios((prev) => [...prev, templateToScenario(template, prev)]);
+    setTemplateMessage(`Imported "${template.title}" into scenarios.`);
+  }
+
   return (
     <main className="relative">
       <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 flex justify-center">
@@ -691,9 +682,7 @@ export default function Home() {
                 Mortgage Scenario Studio
               </h1>
               <p className="text-base text-slate-600">
-                Craft side-by-side loan scenarios that put builder concessions to
-                work. Model rate buydowns, closing cost coverage, and PMI options
-                with production-ready clarity.
+                Craft side-by-side loan scenarios that put builder concessions to work. Model rate buydowns, closing cost coverage, and PMI options with production-ready clarity.
               </p>
             </div>
 
@@ -710,7 +699,7 @@ export default function Home() {
                   disabled={isComparing}
                   className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-900/20 transition hover:from-blue-700 hover:to-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {isComparing ? "Comparing?" : "Run Comparison"}
+                  {isComparing ? "Comparing..." : "Run Comparison"}
                 </button>
               </div>
               <p className="text-xs text-slate-500">
@@ -718,12 +707,6 @@ export default function Home() {
               </p>
             </div>
           </div>
-
-          {templateError && (
-            <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-medium text-rose-700">
-              {templateError}
-            </div>
-          )}
 
           <dl className="mt-6 grid gap-3 sm:grid-cols-3">
             <div className="rounded-2xl border border-slate-200/80 bg-white/70 px-4 py-3">
@@ -753,6 +736,83 @@ export default function Home() {
           </dl>
         </header>
 
+        <section className="rounded-3xl border border-white/70 bg-white/80 p-6 shadow-md shadow-slate-900/5 backdrop-blur">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Saved Templates</h2>
+              <p className="text-xs text-slate-500">
+                Store go-to loan option structures and import them into new comparisons.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => void loadTemplates()}
+                disabled={templatesLoading}
+                className="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-blue-200 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {templatesLoading ? "Loading..." : "Refresh"}
+              </button>
+              <span className="text-xs text-slate-400">
+                {templates.length} saved
+              </span>
+            </div>
+          </div>
+
+          {templateError && (
+            <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">
+              {templateError}
+            </p>
+          )}
+
+          {templateMessage && (
+            <p className="mt-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-xs text-green-700">
+              {templateMessage}
+            </p>
+          )}
+
+          <div className="mt-4 space-y-3">
+            {templatesLoading && !templates.length ? (
+              <p className="text-sm text-slate-500">Loading templates...</p>
+            ) : templates.length ? (
+              <ul className="grid gap-3 md:grid-cols-2">
+                {templates.map((template) => (
+                  <li
+                    key={template.id}
+                    className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4 shadow-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{template.title}</p>
+                        <p className="text-xs text-slate-500">
+                          {template.program} program at {template.noteRate.toFixed(3)}%
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => importTemplate(template)}
+                        className="inline-flex items-center rounded-full border border-blue-200 bg-white px-3 py-1 text-xs font-semibold text-blue-700 transition hover:border-blue-300 hover:text-blue-800"
+                      >
+                        Import
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-slate-500">
+                      <span>Updated {new Date(template.updatedAt).toLocaleDateString()}</span>
+                      <button
+                        onClick={() => deleteTemplate(template.id)}
+                        disabled={deletingTemplateId === template.id}
+                        className="inline-flex items-center rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-600 transition hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {deletingTemplateId === template.id ? "Deleting..." : "Delete"}
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-500">No templates saved yet. Create a scenario below and save it to reuse later.</p>
+            )}
+          </div>
+        </section>
+
         <section className="grid gap-6 lg:grid-cols-1">
           <div className="grid gap-6 lg:grid-cols-2">
             {scenarios.map((scenario, index) => (
@@ -774,49 +834,6 @@ export default function Home() {
                     />
                   </label>
                   <span className={optionBadgeClass}>{scenario.program}</span>
-                </div>
-
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <div className="flex items-center gap-2">
-                    <label
-                      htmlFor={`scenario-template-${index}`}
-                      className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-slate-500"
-                    >
-                      Load Template
-                    </label>
-                    <select
-                      id={`scenario-template-${index}`}
-                      className="rounded-full border border-slate-200 bg-white/70 px-3 py-1 text-xs font-medium text-slate-600 transition hover:border-blue-200 focus:border-blue-300 focus:outline-none"
-                      defaultValue=""
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        if (!value) return;
-                        applyTemplate(index, value);
-                        event.target.value = "";
-                      }}
-                      disabled={isLoadingTemplates || !templates.length}
-                    >
-                      <option value="">
-                        {isLoadingTemplates
-                          ? "Loading templates..."
-                          : templates.length > 0
-                            ? "Choose template"
-                            : "No templates yet"}
-                      </option>
-                      {templates.map((template) => (
-                        <option key={template.id} value={template.id}>
-                          {template.title}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => saveTemplate(index)}
-                    className="inline-flex items-center rounded-full border border-slate-200 bg-white/70 px-3 py-1 text-xs font-medium text-slate-600 transition hover:border-blue-200 hover:text-blue-700"
-                  >
-                    Save as Template
-                  </button>
                 </div>
 
                 <div className="grid gap-6 pt-4">
@@ -905,9 +922,7 @@ export default function Home() {
                           className="w-full"
                           value={scenario.discountPointsPct ?? 0}
                           onChange={(event) =>
-                            update(index, {
-                              discountPointsPct: Number(event.target.value),
-                            })
+                            update(index, { discountPointsPct: Number(event.target.value) })
                           }
                         />
                       </label>
@@ -918,9 +933,7 @@ export default function Home() {
                           className="w-full"
                           value={scenario.closingCosts ?? 0}
                           onChange={(event) =>
-                            update(index, {
-                              closingCosts: Number(event.target.value),
-                            })
+                            update(index, { closingCosts: Number(event.target.value) })
                           }
                         />
                       </label>
@@ -931,9 +944,7 @@ export default function Home() {
                           className="w-full"
                           value={scenario.sellerCredit ?? 0}
                           onChange={(event) =>
-                            update(index, {
-                              sellerCredit: Number(event.target.value),
-                            })
+                            update(index, { sellerCredit: Number(event.target.value) })
                           }
                         />
                       </label>
@@ -962,9 +973,7 @@ export default function Home() {
                           className="w-full"
                           value={scenario.pmiAnnualFactor ?? 0}
                           onChange={(event) =>
-                            update(index, {
-                              pmiAnnualFactor: Number(event.target.value),
-                            })
+                            update(index, { pmiAnnualFactor: Number(event.target.value) })
                           }
                         />
                       </label>
@@ -983,9 +992,7 @@ export default function Home() {
                           className="w-full"
                           value={scenario.taxesMonthly ?? 0}
                           onChange={(event) =>
-                            update(index, {
-                              taxesMonthly: Number(event.target.value),
-                            })
+                            update(index, { taxesMonthly: Number(event.target.value) })
                           }
                         />
                       </label>
@@ -996,9 +1003,7 @@ export default function Home() {
                           className="w-full"
                           value={scenario.insuranceMonthly ?? 0}
                           onChange={(event) =>
-                            update(index, {
-                              insuranceMonthly: Number(event.target.value),
-                            })
+                            update(index, { insuranceMonthly: Number(event.target.value) })
                           }
                         />
                       </label>
@@ -1009,9 +1014,7 @@ export default function Home() {
                           className="w-full"
                           value={scenario.hoaMonthly ?? 0}
                           onChange={(event) =>
-                            update(index, {
-                              hoaMonthly: Number(event.target.value),
-                            })
+                            update(index, { hoaMonthly: Number(event.target.value) })
                           }
                         />
                       </label>
@@ -1027,7 +1030,7 @@ export default function Home() {
                             }
                           />
                           <span className="text-xs font-medium text-slate-600">
-                            Preserve rate ? no buydown allowed
+                            Preserve rate - no buydown allowed
                           </span>
                         </div>
                       </label>
@@ -1036,148 +1039,210 @@ export default function Home() {
                 </div>
 
                 <p className="mt-5 text-xs text-slate-500">
-                  Scenario worksheet for internal use only. Figures are
-                  directional and subject to formal underwriting.
+                  Scenario worksheet for internal use only. Figures are directional and subject to formal underwriting.
                 </p>
+
+                <div className="mt-4 flex justify-end border-t border-slate-200/60 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => saveTemplate(index)}
+                    disabled={savingTemplateIndex === index}
+                    className="inline-flex items-center rounded-full border border-blue-200 bg-white px-4 py-1.5 text-xs font-semibold text-blue-700 transition hover:border-blue-300 hover:text-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {savingTemplateIndex === index ? "Saving..." : "Save as Template"}
+                  </button>
+                </div>
               </article>
             ))}
           </div>
-        </section>
 
-        {results.length > 0 && (
-          <section className="space-y-6">
-            {!!highlightCards.length && (
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                {highlightCards.map((item) => (
-                  <div
-                    key={`${item.title}-${item.option}`}
-                    className="rounded-3xl border border-blue-200/60 bg-gradient-to-br from-white/95 via-white/70 to-blue-50/50 p-5 shadow-sm shadow-blue-900/10"
-                  >
-                    <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-blue-700">
-                      {item.title}
-                    </p>
-                    <p className="mt-3 text-2xl font-semibold text-slate-950">
-                      {item.value}
-                    </p>
-                    <p className="mt-1 text-xs font-medium text-slate-500">
-                      {item.option} ? {item.descriptor}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="overflow-hidden rounded-3xl border border-white/70 bg-white/85 shadow-xl shadow-slate-900/10 backdrop-blur">
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-200 text-sm">
-                  <thead className="bg-slate-900 text-slate-100">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em]">
-                        Metric
-                      </th>
-                      {results.map((_, index) => (
-                        <th
-                          key={index}
-                          className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em]"
-                        >
-                          {scenarios[index]?.name?.trim() || optionLabel(index)}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100/80">
-                    {sections.map((section) => (
-                      <Fragment key={section.title}>
-                        <tr className="bg-slate-100/75">
-                          <td
-                            colSpan={1 + results.length}
-                            className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600"
-                          >
-                            {section.title}
-                          </td>
-                        </tr>
-                        {section.rows.map((row) => (
-                          <tr key={row.label} className="even:bg-slate-50/60">
-                            <td className="px-4 py-3 text-sm font-semibold text-slate-600">
-                              {row.label}
-                            </td>
-                            {results.map((result, index) => (
-                              <td
-                                key={`${row.label}-${index}`}
-                                className="px-4 py-3 text-sm text-slate-900"
-                              >
-                                {row.formatter(scenarios[index], result)}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </Fragment>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {!!chatInsights.length && (
-              <div className="rounded-3xl border border-slate-200/70 bg-white/90 p-6 shadow-md shadow-slate-900/5 backdrop-blur">
-                <header className="flex items-center gap-4 border-b border-slate-200/60 pb-4">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold uppercase tracking-wide text-white">
-                    AI
-                  </span>
-                  <div>
-                    <h2 className="text-base font-semibold text-slate-900">
-                      Mortgage Expert Chatbot
-                    </h2>
-                    <p className="text-xs text-slate-500">
-                      Pros and cons tailored to each scenario you just compared.
-                    </p>
-                  </div>
-                </header>
-
-                <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                  {chatInsights.map(({ name, program, pros, cons }) => (
-                    <article
-                      key={`${name}-${program}`}
-                      className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-4 shadow-sm"
+          {results.length > 0 && (
+            <section className="space-y-6">
+              {!!highlightCards.length && (
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  {highlightCards.map((item) => (
+                    <div
+                      key={`${item.title}-${item.option}`}
+                      className="rounded-3xl border border-blue-200/60 bg-gradient-to-br from-white/95 via-white/70 to-blue-50/50 p-5 shadow-sm shadow-blue-900/10"
                     >
-                      <h3 className="text-sm font-semibold text-slate-900">
-                        {name} <span className="font-normal text-slate-500">({program})</span>
-                      </h3>
-                      <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-                            Pros
-                          </p>
-                          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-slate-700">
-                            {pros.map((pro, idx) => (
-                              <li key={idx}>{pro}</li>
-                            ))}
-                          </ul>
-                        </div>
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">
-                            Cons
-                          </p>
-                          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-slate-700">
-                            {cons.map((con, idx) => (
-                              <li key={idx}>{con}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-                    </article>
+                      <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-blue-700">
+                        {item.title}
+                      </p>
+                      <p className="mt-3 text-2xl font-semibold text-slate-950">
+                        {item.value}
+                      </p>
+                      <p className="mt-1 text-xs font-medium text-slate-500">
+                        {item.option} - {item.descriptor}
+                      </p>
+                    </div>
                   ))}
                 </div>
+              )}
 
-                <p className="mt-4 text-xs text-slate-500">
-                  Assistant uses rules of thumb for illustration only?confirm with
-                  current pricing and underwriting.
-                </p>
+              <div className="overflow-hidden rounded-3xl border border-white/70 bg-white/85 shadow-xl shadow-slate-900/10 backdrop-blur">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-slate-200 text-sm">
+                    <thead className="bg-slate-900 text-slate-100">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em]">
+                          Metric
+                        </th>
+                        {results.map((_, index) => (
+                          <th
+                            key={index}
+                            className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em]"
+                          >
+                            {scenarios[index]?.name?.trim() || optionLabel(index)}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100/80">
+                      {sections.map((section) => (
+                        <Fragment key={section.title}>
+                          <tr className="bg-slate-100/75">
+                            <td
+                              colSpan={1 + results.length}
+                              className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600"
+                            >
+                              {section.title}
+                            </td>
+                          </tr>
+                          {section.rows.map((row) => (
+                            <tr key={row.label} className="even:bg-slate-50/60">
+                              <td className="px-4 py-3 text-sm font-semibold text-slate-600">
+                                {row.label}
+                              </td>
+                              {results.map((result, index) => (
+                                <td
+                                  key={`${row.label}-${index}`}
+                                  className="px-4 py-3 text-sm text-slate-900"
+                                >
+                                  {row.formatter(scenarios[index], result)}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            )}
-          </section>
-        )}
+
+              {!!chatInsights.length && (
+                <div className="rounded-3xl border border-slate-200/70 bg-white/90 p-6 shadow-md shadow-slate-900/5 backdrop-blur">
+                  <header className="flex items-center gap-4 border-b border-slate-200/60 pb-4">
+                    <span className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold uppercase tracking-wide text-white">
+                      AI
+                    </span>
+                    <div>
+                      <h2 className="text-base font-semibold text-slate-900">
+                        Mortgage Expert Chatbot
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        Pros and cons tailored to each scenario you just compared.
+                      </p>
+                    </div>
+                  </header>
+
+                  <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    {chatInsights.map(({ name, program, pros, cons }) => (
+                      <article
+                        key={`${name}-${program}`}
+                        className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-4 shadow-sm"
+                      >
+                        <h3 className="text-sm font-semibold text-slate-900">
+                          {name} <span className="font-normal text-slate-500">({program})</span>
+                        </h3>
+                        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                              Pros
+                            </p>
+                            <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-slate-700">
+                              {pros.map((pro, idx) => (
+                                <li key={idx}>{pro}</li>
+                              ))}
+                            </ul>
+                          </div>
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">
+                              Cons
+                            </p>
+                            <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-slate-700">
+                              {cons.map((con, idx) => (
+                                <li key={idx}>{con}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+
+                  <p className="mt-4 text-xs text-slate-500">
+                    Assistant uses rules of thumb for illustration only. Confirm with current pricing and underwriting.
+                  </p>
+                </div>
+              )}
+            </section>
+          )}
+        </section>
       </div>
     </main>
   );
+}
+
+function templateToScenario(template: LoanTemplate, existing: ScenarioInput[]): ScenarioInput {
+  const name = deriveUniqueName(template.title, existing);
+
+  return {
+    name,
+    price: template.price,
+    ltv: template.ltv ?? undefined,
+    loanAmount: template.loanAmount ?? undefined,
+    program: template.program,
+    termMonths: template.termMonths,
+    noteRate: template.noteRate,
+    discountPointsPct: template.discountPointsPct,
+    closingCosts: template.closingCosts,
+    sellerCredit: template.sellerCredit,
+    pmiType: template.pmiType ?? undefined,
+    pmiAnnualFactor: template.pmiAnnualFactor ?? undefined,
+    taxesMonthly: template.taxesMonthly ?? undefined,
+    insuranceMonthly: template.insuranceMonthly ?? undefined,
+    hoaMonthly: template.hoaMonthly ?? undefined,
+    lockRate: template.lockRate ?? false,
+  };
+}
+
+function deriveUniqueName(base: string, existing: ScenarioInput[]): string {
+  const fallback = "Imported Option";
+  const trimmed = base.trim() || fallback;
+  const existingNames = new Set(
+    existing
+      .map((scenario) => (scenario.name ?? "").trim())
+      .filter(Boolean),
+  );
+  if (!existingNames.has(trimmed)) return trimmed;
+  let counter = 2;
+  let candidate = `${trimmed} (${counter})`;
+  while (existingNames.has(candidate)) {
+    counter += 1;
+    candidate = `${trimmed} (${counter})`;
+  }
+  return candidate;
+}
+
+function getErrorMessage(payload: any, fallback: string): string {
+  if (!payload) return fallback;
+  if (typeof payload === "string") return payload;
+  if (typeof payload.error === "string") return payload.error;
+  if (typeof payload.message === "string") return payload.message;
+  if (payload.error && typeof payload.error === "object") {
+    const errors = Array.isArray(payload.error._errors) ? payload.error._errors : [];
+    if (errors.length) return errors.join(", ");
+  }
+  return fallback;
 }

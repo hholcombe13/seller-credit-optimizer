@@ -1,96 +1,84 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Template } from "@prisma/client";
+import { z } from "zod";
+import { prisma } from "@/lib/prisma";
+import type { LoanTemplate, ScenarioInput } from "@/types/mortgage";
 
-import prisma from "@/lib/prisma";
-import type { ScenarioInput, ScenarioTemplate } from "@/types/mortgage";
+const programEnum = z.enum(["Conventional", "FHA", "VA", "USDA", "Jumbo"]);
+const pmiEnum = z.enum(["BPMI", "SPMI", "LPMI", "None"]);
 
-const REQUIRED_NUMERIC_FIELDS: Array<keyof ScenarioInput> = [
-  "price",
-  "termMonths",
-  "noteRate",
-  "discountPointsPct",
-  "closingCosts",
-  "sellerCredit",
-];
+const numberField = z.number().finite();
+const nonNegativeNumber = numberField.min(0);
 
-function toClientTemplate(template: Template): ScenarioTemplate {
+const scenarioSchema = z.object({
+  name: z.string().optional(),
+  price: nonNegativeNumber,
+  ltv: numberField.min(0).max(1.5).optional(),
+  loanAmount: nonNegativeNumber.optional(),
+  program: programEnum,
+  termMonths: numberField.int().positive(),
+  noteRate: numberField,
+  discountPointsPct: numberField,
+  closingCosts: nonNegativeNumber,
+  sellerCredit: nonNegativeNumber,
+  pmiType: pmiEnum.optional(),
+  pmiAnnualFactor: nonNegativeNumber.optional(),
+  taxesMonthly: nonNegativeNumber.optional(),
+  insuranceMonthly: nonNegativeNumber.optional(),
+  hoaMonthly: nonNegativeNumber.optional(),
+  lockRate: z.boolean().optional(),
+});
+
+const createTemplateSchema = z.object({
+  title: z.string().min(1).max(80).trim(),
+  scenario: scenarioSchema,
+});
+
+function mapTemplate(dbTemplate: Awaited<ReturnType<typeof prisma.template.findUnique>>): LoanTemplate {
+  if (!dbTemplate) {
+    throw new Error("Template not found");
+  }
+
   return {
-    id: template.id,
-    title: template.title,
-    program: template.program as ScenarioTemplate["program"],
-    termMonths: template.termMonths,
-    price: template.price,
-    ltv: template.ltv ?? undefined,
-    loanAmount: template.loanAmount ?? undefined,
-    noteRate: template.noteRate,
-    discountPointsPct: template.discountPts,
-    closingCosts: template.closingCosts,
-    sellerCredit: template.sellerCredit,
-    pmiType: template.pmiType ?? undefined,
-    pmiAnnualFactor: template.pmiAnnualFac ?? undefined,
-    taxesMonthly: template.taxesMonthly ?? undefined,
-    insuranceMonthly: template.insuranceMonthly ?? undefined,
-    hoaMonthly: template.hoaMonthly ?? undefined,
-    lockRate: template.lockRate,
-    createdAt: template.createdAt.toISOString(),
-    updatedAt: template.updatedAt.toISOString(),
+    id: dbTemplate.id,
+    title: dbTemplate.title,
+    program: dbTemplate.program as ScenarioInput["program"],
+    termMonths: dbTemplate.termMonths,
+    price: dbTemplate.price,
+    ltv: dbTemplate.ltv,
+    loanAmount: dbTemplate.loanAmount,
+    noteRate: dbTemplate.noteRate,
+    discountPointsPct: dbTemplate.discountPts,
+    closingCosts: dbTemplate.closingCosts,
+    sellerCredit: dbTemplate.sellerCredit,
+    pmiType: dbTemplate.pmiType as ScenarioInput["pmiType"],
+    pmiAnnualFactor: dbTemplate.pmiAnnualFac,
+    taxesMonthly: dbTemplate.taxesMonthly,
+    insuranceMonthly: dbTemplate.insuranceMonthly,
+    hoaMonthly: dbTemplate.hoaMonthly,
+    lockRate: dbTemplate.lockRate,
+    createdAt: dbTemplate.createdAt.toISOString(),
+    updatedAt: dbTemplate.updatedAt.toISOString(),
   };
 }
 
-function isValidScenario(scenario: ScenarioInput | undefined): scenario is ScenarioInput {
-  if (!scenario) return false;
-  if (!scenario.program) return false;
-
-  return REQUIRED_NUMERIC_FIELDS.every((field) => {
-    const value = scenario[field];
-    return typeof value === "number" && Number.isFinite(value);
-  });
-}
-
 export async function GET() {
-  try {
-    const templates = await prisma.template.findMany({
-      orderBy: { updatedAt: "desc" },
-    });
+  const templates = await prisma.template.findMany({
+    orderBy: { updatedAt: "desc" },
+  });
 
-    return NextResponse.json(templates.map(toClientTemplate));
-  } catch (error) {
-    console.error("Failed to load templates", error);
-    return NextResponse.json(
-      { error: "Unable to load templates" },
-      { status: 500 },
-    );
-  }
+  return NextResponse.json(templates.map(mapTemplate));
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { title, scenario } = (await req.json()) as {
-      title?: string;
-      scenario?: ScenarioInput;
-    };
+    const json = await req.json();
+    const { title, scenario } = createTemplateSchema.parse(json);
 
-    const trimmedTitle = title?.trim();
-
-    if (!trimmedTitle) {
-      return NextResponse.json(
-        { error: "Template title is required" },
-        { status: 400 },
-      );
-    }
-
-    if (!isValidScenario(scenario)) {
-      return NextResponse.json(
-        { error: "Scenario payload is missing required fields" },
-        { status: 400 },
-      );
-    }
-
-    const template = await prisma.template.create({
+    const data = await prisma.template.create({
       data: {
-        title: trimmedTitle,
+        title,
         program: scenario.program,
-        termMonths: Math.round(scenario.termMonths),
+        termMonths: scenario.termMonths,
         price: scenario.price,
         ltv: scenario.ltv ?? null,
         loanAmount: scenario.loanAmount ?? null,
@@ -103,16 +91,16 @@ export async function POST(req: NextRequest) {
         taxesMonthly: scenario.taxesMonthly ?? null,
         insuranceMonthly: scenario.insuranceMonthly ?? null,
         hoaMonthly: scenario.hoaMonthly ?? null,
-        lockRate: !!scenario.lockRate,
+        lockRate: scenario.lockRate ?? false,
       },
     });
 
-    return NextResponse.json(toClientTemplate(template), { status: 201 });
-  } catch (error) {
-    console.error("Failed to save template", error);
-    return NextResponse.json(
-      { error: "Unable to save template" },
-      { status: 500 },
-    );
+    return NextResponse.json(mapTemplate(data), { status: 201 });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return NextResponse.json({ error: err.format() }, { status: 400 });
+    }
+    console.error(err);
+    return NextResponse.json({ error: "Failed to create template" }, { status: 500 });
   }
 }
