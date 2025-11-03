@@ -35,3 +35,25 @@ export interface ScenarioOutput {
   warnings: string[];
   allocationSteps: Array<{ rate: number; pointsCost: number; monthlySave: number; breakEven: number }>;
 }
+
+export interface ScenarioTemplate {
+  id: string;
+  title: string;
+  program: Program;
+  termMonths: number;
+  price: number;
+  ltv?: number;
+  loanAmount?: number;
+  noteRate: number;
+  discountPointsPct: number;
+  closingCosts: number;
+  sellerCredit: number;
+  pmiType?: ScenarioInput["pmiType"];
+  pmiAnnualFactor?: number;
+  taxesMonthly?: number;
+  insuranceMonthly?: number;
+  hoaMonthly?: number;
+  lockRate: boolean;
+  createdAt: string;
+  updatedAt: string;
+}

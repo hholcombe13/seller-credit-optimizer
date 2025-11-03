@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
-import type { ScenarioInput, ScenarioOutput } from "@/types/mortgage";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import type { ScenarioInput, ScenarioOutput, ScenarioTemplate } from "@/types/mortgage";
 import { getStandardFhaAnnualMipFactor } from "@/lib/fha";
 
 type Insight = {
@@ -232,6 +232,111 @@ export default function Home() {
   const [results, setResults] = useState<ScenarioOutput[]>([]);
   const [chatInsights, setChatInsights] = useState<Insight[]>([]);
   const [isComparing, setIsComparing] = useState(false);
+  const [templates, setTemplates] = useState<ScenarioTemplate[]>([]);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+
+  const loadTemplates = useCallback(async () => {
+    try {
+      setIsLoadingTemplates(true);
+      setTemplateError(null);
+      const response = await fetch("/api/templates");
+      if (!response.ok) {
+        throw new Error("Request failed");
+      }
+      const data: ScenarioTemplate[] = await response.json();
+      setTemplates(data);
+    } catch (error) {
+      console.error("Failed to load templates", error);
+      setTemplateError("Unable to load saved templates right now.");
+    } finally {
+      setIsLoadingTemplates(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTemplates();
+  }, [loadTemplates]);
+
+  const saveTemplate = useCallback(
+    async (index: number) => {
+      const scenario = scenarios[index];
+      if (!scenario) return;
+
+      const defaultTitle = scenario.name?.trim() || optionLabel(index);
+      const input = window.prompt("Template name", defaultTitle);
+      if (!input) return;
+      const title = input.trim();
+      if (!title) {
+        window.alert("Template name cannot be blank.");
+        return;
+      }
+
+      try {
+        setTemplateError(null);
+        const response = await fetch("/api/templates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, scenario }),
+        });
+
+        if (!response.ok) {
+          const message = await response.text();
+          throw new Error(message || "Request failed");
+        }
+
+        const saved: ScenarioTemplate = await response.json();
+        setTemplates((previous) => {
+          const existingIndex = previous.findIndex((item) => item.id === saved.id);
+          if (existingIndex >= 0) {
+            const next = [...previous];
+            next[existingIndex] = saved;
+            return next;
+          }
+          return [saved, ...previous];
+        });
+      } catch (error) {
+        console.error("Unable to save template", error);
+        window.alert("Unable to save template. Please try again.");
+      }
+    },
+    [scenarios],
+  );
+
+  const applyTemplate = useCallback(
+    (index: number, templateId: string) => {
+      const template = templates.find((item) => item.id === templateId);
+      if (!template) return;
+
+      setScenarios((previous) => {
+        const next = [...previous];
+        const current = next[index] ?? { ...blank, name: optionLabel(index) };
+
+        next[index] = {
+          ...current,
+          name: template.title,
+          price: template.price,
+          ltv: template.ltv ?? undefined,
+          loanAmount: template.loanAmount ?? undefined,
+          program: template.program,
+          termMonths: template.termMonths,
+          noteRate: template.noteRate,
+          discountPointsPct: template.discountPointsPct,
+          closingCosts: template.closingCosts,
+          sellerCredit: template.sellerCredit,
+          pmiType: template.pmiType ?? current.pmiType ?? "BPMI",
+          pmiAnnualFactor: template.pmiAnnualFactor ?? undefined,
+          taxesMonthly: template.taxesMonthly ?? undefined,
+          insuranceMonthly: template.insuranceMonthly ?? undefined,
+          hoaMonthly: template.hoaMonthly ?? undefined,
+          lockRate: template.lockRate,
+        };
+
+        return next;
+      });
+    },
+    [templates],
+  );
 
   const aggregate = useMemo(() => {
     const totalCredit = scenarios.reduce(
@@ -614,6 +719,12 @@ export default function Home() {
             </div>
           </div>
 
+          {templateError && (
+            <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-medium text-rose-700">
+              {templateError}
+            </div>
+          )}
+
           <dl className="mt-6 grid gap-3 sm:grid-cols-3">
             <div className="rounded-2xl border border-slate-200/80 bg-white/70 px-4 py-3">
               <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
@@ -663,6 +774,49 @@ export default function Home() {
                     />
                   </label>
                   <span className={optionBadgeClass}>{scenario.program}</span>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <label
+                      htmlFor={`scenario-template-${index}`}
+                      className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-slate-500"
+                    >
+                      Load Template
+                    </label>
+                    <select
+                      id={`scenario-template-${index}`}
+                      className="rounded-full border border-slate-200 bg-white/70 px-3 py-1 text-xs font-medium text-slate-600 transition hover:border-blue-200 focus:border-blue-300 focus:outline-none"
+                      defaultValue=""
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (!value) return;
+                        applyTemplate(index, value);
+                        event.target.value = "";
+                      }}
+                      disabled={isLoadingTemplates || !templates.length}
+                    >
+                      <option value="">
+                        {isLoadingTemplates
+                          ? "Loading templates..."
+                          : templates.length > 0
+                            ? "Choose template"
+                            : "No templates yet"}
+                      </option>
+                      {templates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => saveTemplate(index)}
+                    className="inline-flex items-center rounded-full border border-slate-200 bg-white/70 px-3 py-1 text-xs font-medium text-slate-600 transition hover:border-blue-200 hover:text-blue-700"
+                  >
+                    Save as Template
+                  </button>
                 </div>
 
                 <div className="grid gap-6 pt-4">
