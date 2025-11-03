@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import type { ScenarioInput, ScenarioOutput } from "@/types/mortgage";
+import { getStandardFhaAnnualMipFactor } from "@/lib/fha";
 
 type Insight = {
   name: string;
@@ -166,7 +167,33 @@ export default function Home(){
 
   function update(i:number, patch:Partial<ScenarioInput>){
     setScenarios(prev=>{
-      const next=[...prev]; next[i] = {...next[i], ...patch}; return next;
+      const next = [...prev];
+      const current = next[i];
+      const merged: ScenarioInput = { ...current, ...patch };
+
+      const shouldAutoFhaPmi =
+        merged.program === "FHA" &&
+        !("pmiAnnualFactor" in patch) &&
+        (
+          "program" in patch ||
+          "ltv" in patch ||
+          "loanAmount" in patch ||
+          "price" in patch ||
+          "termMonths" in patch
+        );
+
+      if (shouldAutoFhaPmi) {
+        const fhaFactor = getStandardFhaAnnualMipFactor(merged);
+        if (fhaFactor !== undefined) {
+          if (!("pmiType" in patch) && merged.pmiType !== "None") {
+            merged.pmiType = merged.pmiType ?? "BPMI";
+          }
+          merged.pmiAnnualFactor = Number(fhaFactor.toFixed(4));
+        }
+      }
+
+      next[i] = merged;
+      return next;
     });
   }
 
