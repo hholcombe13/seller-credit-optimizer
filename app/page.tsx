@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+
+import { useMemo, useState } from "react";
 import type { ScenarioInput, ScenarioOutput } from "@/types/mortgage";
 import { getStandardFhaAnnualMipFactor } from "@/lib/fha";
 
@@ -15,15 +16,21 @@ const currency = (value: number, options?: { cents?: boolean }) =>
     style: "currency",
     currency: "USD",
     minimumFractionDigits: options?.cents ? 2 : 0,
-    maximumFractionDigits: options?.cents ? 2 : 0
+    maximumFractionDigits: options?.cents ? 2 : 0,
   });
 
-function analyzeScenarios(inputs: ScenarioInput[], outputs: ScenarioOutput[]): Insight[] {
+function analyzeScenarios(
+  inputs: ScenarioInput[],
+  outputs: ScenarioOutput[],
+): Insight[] {
   if (!inputs.length || !outputs.length) return [];
 
   const paired = inputs
     .map((scenario, index) => ({ scenario, output: outputs[index] }))
-    .filter((item): item is { scenario: ScenarioInput; output: ScenarioOutput } => !!item.output);
+    .filter(
+      (item): item is { scenario: ScenarioInput; output: ScenarioOutput } =>
+        !!item.output,
+    );
 
   if (!paired.length) return [];
 
@@ -74,8 +81,13 @@ function analyzeScenarios(inputs: ScenarioInput[], outputs: ScenarioOutput[]): I
       pros.push("Rate is locked so credits stay focused on costs instead of buydowns.");
     }
 
-    if (output.breakEvenMonthsOnPoints && output.breakEvenMonthsOnPoints <= 48) {
-      pros.push(`Point buydown breaks even in about ${output.breakEvenMonthsOnPoints} months.`);
+    if (
+      output.breakEvenMonthsOnPoints &&
+      output.breakEvenMonthsOnPoints <= 48
+    ) {
+      pros.push(
+        `Point buydown breaks even in about ${output.breakEvenMonthsOnPoints} months.`,
+      );
     }
 
     if (!output.warnings.length) {
@@ -91,41 +103,60 @@ function analyzeScenarios(inputs: ScenarioInput[], outputs: ScenarioOutput[]): I
     }
 
     if (output.pmiMonthly > 0) {
-      cons.push(`Includes about ${currency(output.pmiMonthly, { cents: true })} in monthly mortgage insurance.`);
+      cons.push(
+        `Includes about ${currency(output.pmiMonthly, { cents: true })} in monthly mortgage insurance.`,
+      );
     }
 
-    if (output.breakEvenMonthsOnPoints && output.breakEvenMonthsOnPoints > 60) {
-      cons.push(`Rate buydown takes roughly ${output.breakEvenMonthsOnPoints} months to break even.`);
+    if (
+      output.breakEvenMonthsOnPoints &&
+      output.breakEvenMonthsOnPoints > 60
+    ) {
+      cons.push(
+        `Rate buydown takes roughly ${output.breakEvenMonthsOnPoints} months to break even.`,
+      );
     }
 
     if (output.appliedSellerCredit < scenario.sellerCredit) {
       const unused = scenario.sellerCredit - output.appliedSellerCredit;
-      if (unused > 0) cons.push(`About ${currency(unused)} in seller credit cannot be used under the current structure.`);
+      if (unused > 0) {
+        cons.push(
+          `About ${currency(unused)} in seller credit cannot be used under the current structure.`,
+        );
+      }
     }
 
     output.warnings.forEach((warning) => cons.push(warning));
 
     if (scenario.program === "Jumbo" && (scenario.ltv ?? 0) > 0.8) {
-      cons.push("Higher-LTV jumbo loans often face tougher underwriting and reserve requirements.");
+      cons.push(
+        "Higher-LTV jumbo loans often face tougher underwriting and reserve requirements.",
+      );
     }
 
     if (scenario.program === "FHA" && (scenario.ltv ?? 0) > 0.96) {
-      cons.push("High-LTV FHA keeps both upfront and annual MIP in place for longer.");
+      cons.push(
+        "High-LTV FHA keeps both upfront and annual MIP in place for longer.",
+      );
     }
 
     if (!pros.length) {
-      pros.push("Balanced trade-offs—focus on which lever (payment vs. cash) matters more to you.");
+      pros.push(
+        "Balanced trade-offs?focus on which lever (payment vs. cash) matters more to you.",
+      );
     }
 
     if (!cons.length) {
-      cons.push("No major drawbacks flagged—verify program fit with underwriting guidelines.");
+      cons.push(
+        "No major drawbacks flagged?verify program fit with underwriting guidelines.",
+      );
     }
 
     return {
       name: displayName,
       program: scenario.program,
       pros,
-      cons
+      cons,
     };
   });
 }
@@ -145,42 +176,200 @@ const blank: ScenarioInput = {
   taxesMonthly: 350,
   insuranceMonthly: 110,
   hoaMonthly: 0,
-  lockRate: false
+  lockRate: false,
 };
 
-export default function Home(){
-  const [scenarios, setScenarios] = useState<ScenarioInput[]>([{...blank, name:"Option A"}, {...blank, name:"Option B"}]);
-  const [results, setResults] = useState<ScenarioOutput[]>([]);
-  const [insights, setInsights] = useState<Insight[]>([]);
+const optionBadgeClass =
+  "inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700";
+const fieldLabelClass =
+  "text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-slate-500";
 
-  async function compare(){
-    const payload = scenarios.map((scenario)=>({ ...scenario }));
-    const res = await fetch("/api/compare", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    const data: ScenarioOutput[] = await res.json();
-    setResults(data);
-    setInsights(analyzeScenarios(payload, data));
+const formatCurrency = (value: number | null | undefined) => {
+  const num = Number.isFinite(value as number) ? Number(value) : 0;
+  const fraction = Math.abs(num % 1) > 0 ? 2 : 0;
+  return num.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: fraction,
+    maximumFractionDigits: 2,
+  });
+};
+
+const formatRate = (value: number | null | undefined, digits = 3) =>
+  `${Number(value ?? 0).toFixed(digits)}%`;
+
+function optionLabel(index: number) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  let i = index;
+  let label = "";
+
+  do {
+    label = alphabet[i % 26] + label;
+    i = Math.floor(i / 26) - 1;
+  } while (i >= 0);
+
+  return `Option ${label}`;
+}
+
+export default function Home() {
+  const [scenarios, setScenarios] = useState<ScenarioInput[]>([
+    { ...blank, name: "Option A" },
+    { ...blank, name: "Option B" },
+  ]);
+  const [results, setResults] = useState<ScenarioOutput[]>([]);
+  const [chatInsights, setChatInsights] = useState<Insight[]>([]);
+  const [isComparing, setIsComparing] = useState(false);
+
+  const aggregate = useMemo(() => {
+    const totalCredit = scenarios.reduce(
+      (sum, scenario) => sum + (scenario.sellerCredit ?? 0),
+      0,
+    );
+    const avgRate =
+      scenarios.reduce((sum, scenario) => sum + (scenario.noteRate ?? 0), 0) /
+      scenarios.length;
+
+    return {
+      totalCredit,
+      avgRate,
+    };
+  }, [scenarios]);
+
+  const comparisonRows: Array<[string, (result: ScenarioOutput) => string]> = useMemo(
+    () => [
+      ["APR (est)", (r) => formatRate(r.aprEstimate)],
+      ["Loan Amount", (r) => formatCurrency(r.loanAmount)],
+      ["Principal & Interest", (r) => formatCurrency(r.pAndI)],
+      ["Mortgage Insurance", (r) => formatCurrency(r.pmiMonthly)],
+      ["Total Payment (PITI)", (r) => formatCurrency(r.pitiMonthly)],
+      ["Applied Seller Credit", (r) => formatCurrency(r.appliedSellerCredit)],
+      ["? To Discount Points", (r) => formatCurrency(r.appliedToPoints)],
+      ["? To Closing Costs", (r) => formatCurrency(r.appliedToCosts)],
+      ["Cash to Close (est)", (r) => formatCurrency(r.cashToClose)],
+      [
+        "Points Break-even",
+        (r) =>
+          typeof r.breakEvenMonthsOnPoints === "number"
+            ? `${r.breakEvenMonthsOnPoints} mo`
+            : "?",
+      ],
+      [
+        "Warnings",
+        (r) => (r.warnings?.length ? r.warnings.join(" ? ") : "?"),
+      ],
+    ],
+    [],
+  );
+
+  const highlightCards = useMemo(() => {
+    if (!results.length) {
+      return [] as Array<{
+        title: string;
+        value: string;
+        descriptor: string;
+        option: string;
+      }>;
+    }
+
+    const nameFor = (index: number) =>
+      scenarios[index]?.name?.trim() || optionLabel(index);
+
+    const lowestPitiIdx = results.reduce(
+      (best, current, idx) =>
+        current.pitiMonthly < results[best].pitiMonthly ? idx : best,
+      0,
+    );
+
+    const lowestCashIdx = results.reduce(
+      (best, current, idx) =>
+        current.cashToClose < results[best].cashToClose ? idx : best,
+      0,
+    );
+
+    const lowestAprIdx = results.reduce(
+      (best, current, idx) =>
+        current.aprEstimate < results[best].aprEstimate ? idx : best,
+      0,
+    );
+
+    const breakEven = results
+      .map((item, index) => ({ index, value: item.breakEvenMonthsOnPoints }))
+      .filter((item) => typeof item.value === "number" && item.value > 0)
+      .sort((a, b) => (a.value as number) - (b.value as number))[0];
+
+    const summary = [
+      {
+        title: "Most Affordable Monthly",
+        value: formatCurrency(results[lowestPitiIdx].pitiMonthly),
+        descriptor: "Total monthly PITI",
+        option: nameFor(lowestPitiIdx),
+      },
+      {
+        title: "Lowest Cash to Close",
+        value: formatCurrency(results[lowestCashIdx].cashToClose),
+        descriptor: "Estimated funds required",
+        option: nameFor(lowestCashIdx),
+      },
+      {
+        title: "Best APR Estimate",
+        value: formatRate(results[lowestAprIdx].aprEstimate),
+        descriptor: "Annual percentage rate",
+        option: nameFor(lowestAprIdx),
+      },
+    ];
+
+    if (breakEven) {
+      summary.push({
+        title: "Fastest Points Break-even",
+        value: `${breakEven.value} mo`,
+        descriptor: "Time to recover buydown",
+        option: nameFor(breakEven.index),
+      });
+    }
+
+    return summary;
+  }, [results, scenarios]);
+
+  async function compare() {
+    try {
+      setIsComparing(true);
+      const payload = scenarios.map((scenario) => ({ ...scenario }));
+      const response = await fetch("/api/compare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error("Comparison request failed");
+      }
+
+      const data: ScenarioOutput[] = await response.json();
+      setResults(data);
+      setChatInsights(analyzeScenarios(payload, data));
+    } catch (error) {
+      console.error(error);
+      setResults([]);
+      setChatInsights([]);
+    } finally {
+      setIsComparing(false);
+    }
   }
 
-  function update(i:number, patch:Partial<ScenarioInput>){
-    setScenarios(prev=>{
-      const next = [...prev];
-      const current = next[i];
+  function update(index: number, patch: Partial<ScenarioInput>) {
+    setScenarios((previous) => {
+      const next = [...previous];
+      const current = next[index];
       const merged: ScenarioInput = { ...current, ...patch };
 
       const shouldAutoFhaPmi =
         merged.program === "FHA" &&
         !("pmiAnnualFactor" in patch) &&
-        (
-          "program" in patch ||
+        ("program" in patch ||
           "ltv" in patch ||
           "loanAmount" in patch ||
           "price" in patch ||
-          "termMonths" in patch
-        );
+          "termMonths" in patch);
 
       if (shouldAutoFhaPmi) {
         const fhaFactor = getStandardFhaAnnualMipFactor(merged);
@@ -192,154 +381,461 @@ export default function Home(){
         }
       }
 
-      next[i] = merged;
+      next[index] = merged;
       return next;
     });
   }
 
-  const metricRows: Array<[string, (r: ScenarioOutput)=>string | number]> = [
-    ["APR (est)", (r)=> `${r.aprEstimate.toFixed(3)}%`],
-    ["Loan Amount", (r)=> `$${r.loanAmount.toLocaleString()}`],
-    ["P&I", (r)=> `$${r.pAndI.toLocaleString()}`],
-    ["PMI", (r)=> `$${r.pmiMonthly.toLocaleString()}`],
-    ["PITI", (r)=> `$${r.pitiMonthly.toLocaleString()}`],
-    ["Applied Seller Credit", (r)=> `$${r.appliedSellerCredit.toLocaleString()}`],
-    ["→ To Points", (r)=> `$${r.appliedToPoints.toLocaleString()}`],
-    ["→ To Costs", (r)=> `$${r.appliedToCosts.toLocaleString()}`],
-    ["Cash to Close (est)", (r)=> `$${r.cashToClose.toLocaleString()}`],
-    ["Pts Break-Even (mo)", (r)=> r.breakEvenMonthsOnPoints ?? "—"],
-    ["Warnings", (r)=> (r.warnings||[]).join("; ") || "—"],
-  ];
+  function addScenario() {
+    setScenarios((previous) => [
+      ...previous,
+      { ...blank, name: optionLabel(previous.length) },
+    ]);
+  }
 
   return (
-    <main className="p-6 space-y-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Seller Credit Optimizer (Builder LO)</h1>
-        <div className="space-x-2">
-          <button className="px-3 py-2 border rounded" onClick={()=>setScenarios([...scenarios, {...blank, name:`Option ${String.fromCharCode(65+scenarios.length)}` }])}>New Scenario</button>
-          <button className="px-3 py-2 bg-black text-white rounded" onClick={compare}>Compare</button>
-        </div>
-      </header>
+    <main className="relative">
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 flex justify-center">
+        <div className="h-64 w-[36rem] rounded-full bg-blue-200/40 blur-3xl" />
+      </div>
 
-      <section className="grid md:grid-cols-2 gap-4">
-        {scenarios.map((s,i)=>(
-          <div key={i} className="rounded border p-4 space-y-2">
-            <input className="w-full border rounded p-2" value={s.name||""} onChange={e=>update(i,{name:e.target.value})}/>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="text-sm">Price
-                <input type="number" className="w-full border rounded p-2" value={s.price} onChange={e=>update(i,{price:+e.target.value})}/>
-              </label>
-              <label className="text-sm">LTV
-                <input type="number" step="0.01" className="w-full border rounded p-2" value={s.ltv ?? 0} onChange={e=>update(i,{ltv:+e.target.value})}/>
-              </label>
-              <label className="text-sm">Program
-                <select className="w-full border rounded p-2" value={s.program} onChange={e=>update(i,{program:e.target.value as ScenarioInput["program"]})}>
-                  <option>Conventional</option><option>FHA</option><option>VA</option><option>USDA</option><option>Jumbo</option>
-                </select>
-              </label>
-              <label className="text-sm">Term (mo)
-                <input type="number" className="w-full border rounded p-2" value={s.termMonths} onChange={e=>update(i,{termMonths:+e.target.value})}/>
-              </label>
-              <label className="text-sm">Rate (%)
-                <input type="number" step="0.001" className="w-full border rounded p-2" value={s.noteRate} onChange={e=>update(i,{noteRate:+e.target.value})}/>
-              </label>
-              <label className="text-sm">Discount Pts (%)
-                <input type="number" step="0.125" className="w-full border rounded p-2" value={s.discountPointsPct} onChange={e=>update(i,{discountPointsPct:+e.target.value})}/>
-              </label>
-              <label className="text-sm">Closing Costs ($)
-                <input type="number" className="w-full border rounded p-2" value={s.closingCosts} onChange={e=>update(i,{closingCosts:+e.target.value})}/>
-              </label>
-              <label className="text-sm">Seller Credit ($)
-                <input type="number" className="w-full border rounded p-2" value={s.sellerCredit} onChange={e=>update(i,{sellerCredit:+e.target.value})}/>
-              </label>
-              <label className="text-sm">PMI Type
-                <select className="w-full border rounded p-2" value={s.pmiType} onChange={e=>update(i,{pmiType:e.target.value as ScenarioInput["pmiType"]})}>
-                  <option>BPMI</option><option>SPMI</option><option>LPMI</option><option>None</option>
-                </select>
-              </label>
-              <label className="text-sm">PMI Annual Factor
-                <input type="number" step="0.001" className="w-full border rounded p-2" value={s.pmiAnnualFactor ?? 0} onChange={e=>update(i,{pmiAnnualFactor:+e.target.value})}/>
-              </label>
-              <label className="text-sm">Taxes ($/mo)
-                <input type="number" className="w-full border rounded p-2" value={s.taxesMonthly ?? 0} onChange={e=>update(i,{taxesMonthly:+e.target.value})}/>
-              </label>
-              <label className="text-sm">Insurance ($/mo)
-                <input type="number" className="w-full border rounded p-2" value={s.insuranceMonthly ?? 0} onChange={e=>update(i,{insuranceMonthly:+e.target.value})}/>
-              </label>
-              <label className="text-sm">HOA ($/mo)
-                <input type="number" className="w-full border rounded p-2" value={s.hoaMonthly ?? 0} onChange={e=>update(i,{hoaMonthly:+e.target.value})}/>
-              </label>
-              <label className="text-sm flex items-center gap-2">
-                <input type="checkbox" checked={!!s.lockRate} onChange={e=>update(i,{lockRate:e.target.checked})}/> Lock Rate (no buydown)
-              </label>
+      <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 pb-16 pt-10 sm:px-6 lg:px-8">
+        <header className="rounded-3xl border border-white/70 bg-white/80 p-8 shadow-lg shadow-slate-900/5 backdrop-blur-xl">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="max-w-2xl space-y-4">
+              <span className="inline-flex items-center gap-2 rounded-full bg-blue-100/70 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.3em] text-blue-700">
+                Builder Lending Studio
+              </span>
+              <h1 className="text-3xl font-semibold text-slate-950 md:text-4xl">
+                Mortgage Scenario Studio
+              </h1>
+              <p className="text-base text-slate-600">
+                Craft side-by-side loan scenarios that put builder concessions to
+                work. Model rate buydowns, closing cost coverage, and PMI options
+                with production-ready clarity.
+              </p>
             </div>
-            <p className="text-xs text-gray-500">Scenario tool — estimates only. No borrower PII.</p>
-          </div>
-        ))}
-      </section>
 
-      {!!results.length && (
-        <section className="space-y-6">
-          <div className="overflow-x-auto">
-            <table className="min-w-full border text-sm">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="p-2 text-left">Metric</th>
-                  {results.map((result, i)=>(<th key={i} className="p-2 text-left">{scenarios[i]?.name||`Option ${i+1}`}</th>))}
-                </tr>
-              </thead>
-              <tbody>
-                {metricRows.map(([label, format])=>(
-                  <tr key={label}>
-                    <td className="p-2 font-medium">{label}</td>
-                    {results.map((r, i)=>(<td key={i} className="p-2">{format(r)}</td>))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="flex flex-col gap-3 lg:items-end">
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={addScenario}
+                  className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white/70 px-5 py-2.5 text-sm font-medium text-slate-700 transition hover:border-blue-200 hover:text-blue-700"
+                >
+                  Add Scenario
+                </button>
+                <button
+                  onClick={compare}
+                  disabled={isComparing}
+                  className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-900/20 transition hover:from-blue-700 hover:to-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isComparing ? "Comparing?" : "Run Comparison"}
+                </button>
+              </div>
+              <p className="text-xs text-slate-500">
+                Scenarios are session-based and never store borrower PII.
+              </p>
+            </div>
           </div>
 
-          {!!insights.length && (
-            <div className="space-y-4 rounded-lg border bg-white p-4 shadow-sm">
-              <header className="flex items-center gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-black text-sm font-semibold uppercase tracking-tight text-white">AI</span>
-                <div>
-                  <h2 className="text-base font-semibold">Mortgage Expert Chatbot</h2>
-                  <p className="text-xs text-gray-500">Pros and cons tailored to each scenario you just compared.</p>
+          <dl className="mt-6 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200/80 bg-white/70 px-4 py-3">
+              <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Active Scenarios
+              </dt>
+              <dd className="mt-1 text-2xl font-semibold text-slate-900">
+                {scenarios.length.toString().padStart(2, "0")}
+              </dd>
+            </div>
+            <div className="rounded-2xl border border-slate-200/80 bg-white/70 px-4 py-3">
+              <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Average Note Rate
+              </dt>
+              <dd className="mt-1 text-2xl font-semibold text-slate-900">
+                {formatRate(aggregate.avgRate, 3)}
+              </dd>
+            </div>
+            <div className="rounded-2xl border border-slate-200/80 bg-white/70 px-4 py-3">
+              <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Builder Credits Modeled
+              </dt>
+              <dd className="mt-1 text-2xl font-semibold text-slate-900">
+                {formatCurrency(aggregate.totalCredit)}
+              </dd>
+            </div>
+          </dl>
+        </header>
+
+        <section className="grid gap-6 lg:grid-cols-1">
+          <div className="grid gap-6 lg:grid-cols-2">
+            {scenarios.map((scenario, index) => (
+              <article
+                key={index}
+                className="group rounded-3xl border border-slate-200/80 bg-white/80 p-6 shadow-sm shadow-slate-900/5 transition hover:border-blue-200 hover:shadow-lg hover:shadow-blue-900/10"
+              >
+                <div className="flex items-center gap-3 border-b border-slate-200/60 pb-4">
+                  <label className="flex-1">
+                    <span className="sr-only">Scenario Name</span>
+                    <input
+                      id={`scenario-name-${index}`}
+                      className="w-full border-none bg-transparent px-0 text-lg font-semibold text-slate-950 placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-0"
+                      placeholder={optionLabel(index)}
+                      value={scenario.name ?? ""}
+                      onChange={(event) =>
+                        update(index, { name: event.target.value })
+                      }
+                    />
+                  </label>
+                  <span className={optionBadgeClass}>{scenario.program}</span>
                 </div>
-              </header>
 
-              <div className="space-y-4">
-                {insights.map(({ name, program, pros, cons }) => (
-                  <div key={name + program} className="rounded-md border border-gray-200 bg-gray-50 p-3">
-                    <h3 className="text-sm font-semibold">{name} <span className="font-normal text-gray-500">({program})</span></h3>
-                    <div className="mt-2 grid gap-4 md:grid-cols-2">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-green-700">Pros</p>
-                        <ul className="mt-1 list-disc space-y-1 pl-4 text-sm text-gray-700">
-                          {pros.map((pro, index) => (
-                            <li key={index}>{pro}</li>
-                          ))}
-                        </ul>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Cons</p>
-                        <ul className="mt-1 list-disc space-y-1 pl-4 text-sm text-gray-700">
-                          {cons.map((con, index) => (
-                            <li key={index}>{con}</li>
-                          ))}
-                        </ul>
-                      </div>
+                <div className="grid gap-6 pt-4">
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                      Acquisition
+                    </h3>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>Purchase Price</span>
+                        <input
+                          type="number"
+                          className="w-full"
+                          value={scenario.price ?? 0}
+                          onChange={(event) =>
+                            update(index, { price: Number(event.target.value) })
+                          }
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>LTV</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          className="w-full"
+                          value={scenario.ltv ?? 0}
+                          onChange={(event) =>
+                            update(index, { ltv: Number(event.target.value) })
+                          }
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>Program</span>
+                        <select
+                          className="w-full"
+                          value={scenario.program}
+                          onChange={(event) =>
+                            update(index, {
+                              program: event.target.value as ScenarioInput["program"],
+                            })
+                          }
+                        >
+                          <option>Conventional</option>
+                          <option>FHA</option>
+                          <option>VA</option>
+                          <option>USDA</option>
+                          <option>Jumbo</option>
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>Term (Months)</span>
+                        <input
+                          type="number"
+                          className="w-full"
+                          value={scenario.termMonths ?? 0}
+                          onChange={(event) =>
+                            update(index, { termMonths: Number(event.target.value) })
+                          }
+                        />
+                      </label>
                     </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                      Pricing
+                    </h3>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>Note Rate</span>
+                        <input
+                          type="number"
+                          step="0.001"
+                          className="w-full"
+                          value={scenario.noteRate ?? 0}
+                          onChange={(event) =>
+                            update(index, { noteRate: Number(event.target.value) })
+                          }
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>Discount Points %</span>
+                        <input
+                          type="number"
+                          step="0.125"
+                          className="w-full"
+                          value={scenario.discountPointsPct ?? 0}
+                          onChange={(event) =>
+                            update(index, {
+                              discountPointsPct: Number(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>Closing Costs</span>
+                        <input
+                          type="number"
+                          className="w-full"
+                          value={scenario.closingCosts ?? 0}
+                          onChange={(event) =>
+                            update(index, {
+                              closingCosts: Number(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>Seller Credit</span>
+                        <input
+                          type="number"
+                          className="w-full"
+                          value={scenario.sellerCredit ?? 0}
+                          onChange={(event) =>
+                            update(index, {
+                              sellerCredit: Number(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>PMI Type</span>
+                        <select
+                          className="w-full"
+                          value={scenario.pmiType}
+                          onChange={(event) =>
+                            update(index, {
+                              pmiType: event.target.value as ScenarioInput["pmiType"],
+                            })
+                          }
+                        >
+                          <option>BPMI</option>
+                          <option>SPMI</option>
+                          <option>LPMI</option>
+                          <option>None</option>
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>PMI Annual Factor</span>
+                        <input
+                          type="number"
+                          step="0.001"
+                          className="w-full"
+                          value={scenario.pmiAnnualFactor ?? 0}
+                          onChange={(event) =>
+                            update(index, {
+                              pmiAnnualFactor: Number(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                      Monthly Carry
+                    </h3>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>Taxes</span>
+                        <input
+                          type="number"
+                          className="w-full"
+                          value={scenario.taxesMonthly ?? 0}
+                          onChange={(event) =>
+                            update(index, {
+                              taxesMonthly: Number(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>Insurance</span>
+                        <input
+                          type="number"
+                          className="w-full"
+                          value={scenario.insuranceMonthly ?? 0}
+                          onChange={(event) =>
+                            update(index, {
+                              insuranceMonthly: Number(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>HOA</span>
+                        <input
+                          type="number"
+                          className="w-full"
+                          value={scenario.hoaMonthly ?? 0}
+                          onChange={(event) =>
+                            update(index, {
+                              hoaMonthly: Number(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-sm font-medium text-slate-600">
+                        <span className={fieldLabelClass}>Lock Rate (No Buydown)</span>
+                        <div className="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-white/80 px-3 py-2">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={!!scenario.lockRate}
+                            onChange={(event) =>
+                              update(index, { lockRate: event.target.checked })
+                            }
+                          />
+                          <span className="text-xs font-medium text-slate-600">
+                            Preserve rate ? no buydown allowed
+                          </span>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <p className="mt-5 text-xs text-slate-500">
+                  Scenario worksheet for internal use only. Figures are
+                  directional and subject to formal underwriting.
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        {results.length > 0 && (
+          <section className="space-y-6">
+            {!!highlightCards.length && (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                {highlightCards.map((item) => (
+                  <div
+                    key={`${item.title}-${item.option}`}
+                    className="rounded-3xl border border-blue-200/60 bg-gradient-to-br from-white/95 via-white/70 to-blue-50/50 p-5 shadow-sm shadow-blue-900/10"
+                  >
+                    <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-blue-700">
+                      {item.title}
+                    </p>
+                    <p className="mt-3 text-2xl font-semibold text-slate-950">
+                      {item.value}
+                    </p>
+                    <p className="mt-1 text-xs font-medium text-slate-500">
+                      {item.option} ? {item.descriptor}
+                    </p>
                   </div>
                 ))}
               </div>
+            )}
 
-              <p className="text-xs text-gray-500">Assistant uses rules of thumb for illustration only—confirm with current pricing and underwriting.</p>
+            <div className="overflow-hidden rounded-3xl border border-white/70 bg-white/85 shadow-xl shadow-slate-900/10 backdrop-blur">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-900 text-slate-100">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em]">
+                        Metric
+                      </th>
+                      {results.map((_, index) => (
+                        <th
+                          key={index}
+                          className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em]"
+                        >
+                          {scenarios[index]?.name?.trim() || optionLabel(index)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100/80">
+                    {comparisonRows.map(([label, formatter]) => (
+                      <tr key={label} className="even:bg-slate-50/60">
+                        <td className="px-4 py-3 text-sm font-semibold text-slate-600">
+                          {label}
+                        </td>
+                        {results.map((result, index) => (
+                          <td
+                            key={`${label}-${index}`}
+                            className="px-4 py-3 text-sm text-slate-900"
+                          >
+                            {formatter(result)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          )}
-        </section>
-      )}
+
+            {!!chatInsights.length && (
+              <div className="rounded-3xl border border-slate-200/70 bg-white/90 p-6 shadow-md shadow-slate-900/5 backdrop-blur">
+                <header className="flex items-center gap-4 border-b border-slate-200/60 pb-4">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold uppercase tracking-wide text-white">
+                    AI
+                  </span>
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-900">
+                      Mortgage Expert Chatbot
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Pros and cons tailored to each scenario you just compared.
+                    </p>
+                  </div>
+                </header>
+
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  {chatInsights.map(({ name, program, pros, cons }) => (
+                    <article
+                      key={`${name}-${program}`}
+                      className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-4 shadow-sm"
+                    >
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        {name} <span className="font-normal text-slate-500">({program})</span>
+                      </h3>
+                      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                            Pros
+                          </p>
+                          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-slate-700">
+                            {pros.map((pro, idx) => (
+                              <li key={idx}>{pro}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">
+                            Cons
+                          </p>
+                          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-slate-700">
+                            {cons.map((con, idx) => (
+                              <li key={idx}>{con}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+
+                <p className="mt-4 text-xs text-slate-500">
+                  Assistant uses rules of thumb for illustration only?confirm with
+                  current pricing and underwriting.
+                </p>
+              </div>
+            )}
+          </section>
+        )}
+      </div>
     </main>
   );
 }
